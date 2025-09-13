@@ -119,7 +119,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const connection = await storage.createPlatformConnection(validatedData);
-      res.json(connection);
+      
+      // Return safe connection data (without tokens) for security
+      const safeConnection = {
+        id: connection.id,
+        platform: connection.platform,
+        platformUserId: connection.platformUserId,
+        isActive: connection.isActive,
+        createdAt: connection.createdAt,
+        updatedAt: connection.updatedAt,
+      };
+      
+      res.json(safeConnection);
     } catch (error) {
       console.error("Error creating platform connection:", error);
       res.status(500).json({ message: "Failed to create platform connection" });
@@ -136,10 +147,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const connections = await storage.getPlatformConnectionsByBusinessId(business.id);
-      res.json(connections);
+      
+      // Redact sensitive token information before sending to client
+      const safeConnections = connections.map(connection => ({
+        id: connection.id,
+        platform: connection.platform,
+        platformUserId: connection.platformUserId,
+        isActive: connection.isActive,
+        createdAt: connection.createdAt,
+        updatedAt: connection.updatedAt,
+        // accessToken and refreshToken deliberately omitted for security
+      }));
+      
+      res.json(safeConnections);
     } catch (error) {
       console.error("Error fetching platform connections:", error);
       res.status(500).json({ message: "Failed to fetch platform connections" });
+    }
+  });
+
+  // Platform connection management endpoints
+  app.patch('/api/platform-connections/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      // First, verify ownership by checking if connection belongs to user's business
+      const existingConnections = await storage.getPlatformConnectionsByBusinessId(business.id);
+      const connectionToUpdate = existingConnections.find(conn => conn.id === id);
+      
+      if (!connectionToUpdate) {
+        return res.status(404).json({ message: "Platform connection not found or unauthorized" });
+      }
+
+      // Only allow updating specific safe fields (not businessId or tokens)
+      const allowedUpdates = {
+        ...(req.body.isActive !== undefined && { isActive: req.body.isActive }),
+        ...(req.body.platformUserId && { platformUserId: req.body.platformUserId }),
+      };
+
+      const connection = await storage.updatePlatformConnection(id, allowedUpdates);
+      if (!connection) {
+        return res.status(404).json({ message: "Platform connection not found" });
+      }
+
+      // Return safe connection data (without tokens)
+      const safeConnection = {
+        id: connection.id,
+        platform: connection.platform,
+        platformUserId: connection.platformUserId,
+        isActive: connection.isActive,
+        createdAt: connection.createdAt,
+        updatedAt: connection.updatedAt,
+      };
+
+      res.json(safeConnection);
+    } catch (error) {
+      console.error("Error updating platform connection:", error);
+      res.status(500).json({ message: "Failed to update platform connection" });
+    }
+  });
+
+  app.delete('/api/platform-connections/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      // First, verify ownership by checking if connection belongs to user's business
+      const existingConnections = await storage.getPlatformConnectionsByBusinessId(business.id);
+      const connectionToDelete = existingConnections.find(conn => conn.id === id);
+      
+      if (!connectionToDelete) {
+        return res.status(404).json({ message: "Platform connection not found or unauthorized" });
+      }
+
+      await storage.deletePlatformConnection(id);
+      res.json({ message: "Platform connection deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting platform connection:", error);
+      res.status(500).json({ message: "Failed to delete platform connection" });
     }
   });
 
