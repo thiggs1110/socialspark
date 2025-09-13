@@ -306,6 +306,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { scheduledFor } = req.body;
+      const userId = req.user.id;
+      
+      // Verify ownership - ensure content belongs to user's business
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
 
       const updatedContent = await storage.updateContentStatus(id, "approved");
       
@@ -323,6 +335,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch('/api/content/:id/reject', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.id;
+      
+      // Verify ownership - ensure content belongs to user's business
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
       const updatedContent = await storage.updateContentStatus(id, "rejected");
       res.json(updatedContent);
     } catch (error) {
@@ -334,6 +359,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch('/api/content/:id/publish', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.id;
+      
+      // Verify ownership - ensure content belongs to user's business
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
       const success = await publishContent(id);
       
       if (success) {
@@ -344,6 +382,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error publishing content:", error);
       res.status(500).json({ message: "Failed to publish content" });
+    }
+  });
+
+  // Calendar and scheduling routes
+  app.get('/api/content/scheduled', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const { startDate, endDate } = req.query;
+      const scheduledContent = await storage.getScheduledContent(
+        business.id, 
+        startDate ? new Date(startDate as string) : undefined,
+        endDate ? new Date(endDate as string) : undefined
+      );
+      
+      res.json(scheduledContent);
+    } catch (error) {
+      console.error("Error fetching scheduled content:", error);
+      res.status(500).json({ message: "Failed to fetch scheduled content" });
+    }
+  });
+
+  app.patch('/api/content/:id/schedule', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { scheduledFor } = req.body;
+      const userId = req.user.id;
+
+      if (!scheduledFor) {
+        return res.status(400).json({ message: "Scheduled date is required" });
+      }
+      
+      // Verify ownership - ensure content belongs to user's business
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      // Update content with scheduled time and approve it for publishing
+      const updatedContent = await storage.updateContentStatus(id, "approved");
+      await scheduleContent(id, new Date(scheduledFor));
+      
+      res.json(updatedContent);
+    } catch (error) {
+      console.error("Error scheduling content:", error);
+      res.status(500).json({ message: "Failed to schedule content" });
+    }
+  });
+
+  app.get('/api/content/publishing-queue', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const queuedContent = await storage.getPublishingQueue(business.id);
+      res.json(queuedContent);
+    } catch (error) {
+      console.error("Error fetching publishing queue:", error);
+      res.status(500).json({ message: "Failed to fetch publishing queue" });
     }
   });
 

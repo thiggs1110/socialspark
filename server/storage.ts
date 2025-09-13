@@ -25,7 +25,7 @@ import {
   type InsertSchedulingSettings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, or, count } from "drizzle-orm";
+import { eq, desc, and, or, count, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations - mandatory for Replit Auth
@@ -52,6 +52,9 @@ export interface IStorage {
   createContent(content: InsertContent): Promise<Content>;
   getContentByBusinessId(businessId: string, limit?: number): Promise<Content[]>;
   getPendingContent(businessId: string): Promise<Content[]>;
+  getScheduledContent(businessId: string, startDate?: Date, endDate?: Date): Promise<Content[]>;
+  getPublishingQueue(businessId: string): Promise<Content[]>;
+  getAllDueContent(): Promise<Content[]>;
   updateContentStatus(id: string, status: string, publishedAt?: Date): Promise<Content | undefined>;
   getContentById(id: string): Promise<Content | undefined>;
 
@@ -222,6 +225,61 @@ export class DatabaseStorage implements IStorage {
   async getContentById(id: string): Promise<Content | undefined> {
     const [contentItem] = await db.select().from(content).where(eq(content.id, id));
     return contentItem;
+  }
+
+  async getScheduledContent(businessId: string, startDate?: Date, endDate?: Date): Promise<Content[]> {
+    let conditions = [
+      eq(content.businessId, businessId),
+      or(
+        eq(content.status, "approved"),
+        eq(content.status, "published")
+      )
+    ];
+
+    // Add date range filtering if provided
+    if (startDate) {
+      conditions.push(sql`${content.scheduledFor} >= ${startDate.toISOString()}`);
+    }
+    if (endDate) {
+      conditions.push(sql`${content.scheduledFor} <= ${endDate.toISOString()}`);
+    }
+
+    return await db
+      .select()
+      .from(content)
+      .where(and(...conditions))
+      .orderBy(content.scheduledFor);
+  }
+
+  async getPublishingQueue(businessId: string): Promise<Content[]> {
+    const now = new Date();
+    return await db
+      .select()
+      .from(content)
+      .where(
+        and(
+          eq(content.businessId, businessId),
+          eq(content.status, "approved"),
+          sql`${content.scheduledFor} <= ${now.toISOString()}`
+        )
+      )
+      .orderBy(content.scheduledFor);
+  }
+
+  async getAllDueContent(): Promise<Content[]> {
+    const now = new Date();
+    return await db
+      .select()
+      .from(content)
+      .where(
+        and(
+          eq(content.status, "approved"),
+          sql`${content.scheduledFor} <= ${now.toISOString()}`,
+          sql`${content.publishedAt} IS NULL`
+        )
+      )
+      .orderBy(content.scheduledFor)
+      .limit(100); // Limit to prevent overwhelming the worker
   }
 
   // Analytics operations
