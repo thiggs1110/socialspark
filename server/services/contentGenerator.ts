@@ -21,23 +21,34 @@ export interface GeneratedPost {
 
 export async function generateBatchContent(request: BatchContentGenerationRequest): Promise<GeneratedPost[]> {
   // Get business and brand voice information
-  const business = await storage.getBusinessByUserId(request.businessId);
+  const business = await storage.getBusinessById(request.businessId);
   if (!business) {
+    console.error(`Business not found for businessId: ${request.businessId}`);
     throw new Error("Business not found");
   }
 
+  console.log(`Found business: ${business.id} (${business.name}) for user: ${business.userId}`);
+
   const brandVoice = await storage.getBrandVoiceByBusinessId(business.id);
   if (!brandVoice) {
+    console.error(`Brand voice not configured for businessId: ${business.id}`);
     throw new Error("Brand voice not configured");
   }
 
+  console.log(`Found brand voice: ${brandVoice.id} with tone: ${brandVoice.tone} and voice: ${brandVoice.voice}`);
+
   const platformConnections = await storage.getPlatformConnectionsByBusinessId(business.id);
-  const activePlatforms = platformConnections
-    .filter(conn => conn.isActive && request.platforms.includes(conn.platform))
+  const connectedPlatforms = platformConnections
+    .filter(conn => conn.isActive)
     .map(conn => conn.platform);
 
+  // For content generation, allow all requested platforms regardless of connection status
+  // Content can be generated as drafts even without platform connections
+  // Platform connections are only required for actual publishing
+  const activePlatforms = request.platforms;
+
   if (activePlatforms.length === 0) {
-    throw new Error("No active platforms found for content generation");
+    throw new Error("No platforms specified for content generation");
   }
 
   const generatedPosts: GeneratedPost[] = [];
@@ -56,7 +67,7 @@ export async function generateBatchContent(request: BatchContentGenerationReques
             tone: brandVoice.tone,
             voice: brandVoice.voice,
             brandAdjectives: brandVoice.brandAdjectives || [],
-            useEmojis: brandVoice.useEmojis || true,
+            useEmojis: brandVoice.useEmojis ?? true,
           },
           specialInstructions: request.specialInstructions,
         };

@@ -1,8 +1,14 @@
-import OpenAI from "openai";
+import Anthropic from '@anthropic-ai/sdk';
 
-// the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key" 
+/*
+Using Claude 3.5 Sonnet which is the most capable and widely available Anthropic model for content generation.
+*/
+
+// Using Claude 3.5 Sonnet for reliable content generation
+const DEFAULT_MODEL_STR = "claude-3-5-sonnet-20241022";
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 export interface ContentGenerationRequest {
@@ -67,13 +73,20 @@ Respond in JSON format with the following structure:
 `;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-5",
+    const response = await anthropic.messages.create({
+      model: DEFAULT_MODEL_STR,
+      max_tokens: 1024,
+      system: "You are an expert social media content creator. Always respond with valid JSON format.",
       messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
     });
 
-    const result = JSON.parse(response.choices[0].message.content || "{}");
+    const textContent = response.content.find(block => block.type === 'text');
+    const rawText = (textContent as any)?.text || "{}";
+    
+    // Strip markdown code fences if present
+    const cleanedText = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    
+    const result = JSON.parse(cleanedText);
 
     return {
       title: result.title,
@@ -113,12 +126,14 @@ Respond only with the reply text, no additional formatting or quotes.
 `;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-5",
+    const response = await anthropic.messages.create({
+      model: DEFAULT_MODEL_STR,
+      max_tokens: 256,
       messages: [{ role: "user", content: prompt }],
     });
 
-    return response.choices[0].message.content?.trim() || "Thank you for your comment!";
+    const textContent = response.content.find(block => block.type === 'text');
+    return (textContent as any)?.text?.trim() || "Thank you for your comment!";
   } catch (error) {
     console.error("Error generating reply:", error);
     throw new Error("Failed to generate reply: " + (error as Error).message);
@@ -149,13 +164,20 @@ Respond in JSON format:
 `;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-5",
+    const response = await anthropic.messages.create({
+      model: DEFAULT_MODEL_STR,
+      max_tokens: 512,
+      system: "You are a brand voice analysis expert. Always respond with valid JSON format.",
       messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
     });
 
-    const result = JSON.parse(response.choices[0].message.content || "{}");
+    const textContent = response.content.find(block => block.type === 'text');
+    const rawText = (textContent as any)?.text || "{}";
+    
+    // Strip markdown code fences if present
+    const cleanedText = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    
+    const result = JSON.parse(cleanedText);
 
     return {
       suggestedTone: result.suggestedTone || "professional",

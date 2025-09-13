@@ -108,7 +108,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getBusinessByUserId(userId: string): Promise<Business | undefined> {
+    // First, try to get a business with a brand voice configured
+    const businessWithBrandVoice = await db
+      .select()
+      .from(businesses)
+      .innerJoin(brandVoices, eq(businesses.id, brandVoices.businessId))
+      .where(eq(businesses.userId, userId))
+      .limit(1);
+    
+    if (businessWithBrandVoice.length > 0) {
+      return businessWithBrandVoice[0].businesses;
+    }
+    
+    // Fallback to any business for this user
     const [business] = await db.select().from(businesses).where(eq(businesses.userId, userId));
+    return business;
+  }
+
+  async getBusinessById(businessId: string): Promise<Business | undefined> {
+    const [business] = await db.select().from(businesses).where(eq(businesses.id, businessId));
     return business;
   }
 
