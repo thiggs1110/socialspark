@@ -2,6 +2,7 @@ import { Content } from "@shared/schema";
 import { PlatformFormatter, FormattedContent, PlatformName, PLATFORM_CONSTRAINTS } from "./platformFormatter";
 import { SocialMediaManager, SocialMediaPost, PublishResult } from "./socialMediaApi";
 import { storage } from "../storage";
+import { realTimeStatusService } from "./realTimeStatusService";
 
 export interface PublishingOptions {
   validateBeforePublish: boolean;
@@ -74,34 +75,59 @@ export class EnhancedPublisher {
       // Get content from database
       const content = await storage.getContentById(contentId);
       if (!content) {
+        realTimeStatusService.sendErrorStatus(this.businessId, contentId, platform, `Content not found: ${contentId}`);
         throw new Error(`Content not found: ${contentId}`);
       }
 
       // Verify content belongs to this business
       if (content.businessId !== this.businessId) {
+        realTimeStatusService.sendErrorStatus(this.businessId, contentId, platform, "Content does not belong to this business");
         throw new Error("Content does not belong to this business");
       }
+
+      // Send formatting status update
+      realTimeStatusService.sendFormattingStatus(this.businessId, contentId, platform, true, []);
 
       // Format content for the platform
       const formatted = PlatformFormatter.formatForPlatform(content, platform);
       result.formatted = formatted;
       result.warnings.push(...formatted.warnings);
 
+      // Send validation status update
+      if (options.validateBeforePublish) {
+        realTimeStatusService.sendValidationStatus(
+          this.businessId, 
+          contentId, 
+          platform, 
+          formatted.isValid, 
+          formatted.errors, 
+          formatted.warnings
+        );
+      }
+
       // Validate content if required
       if (options.validateBeforePublish && !formatted.isValid) {
         if (options.autoFixContent && formatted.errors.length > 0) {
           // Content was already auto-fixed in formatter, but still has errors
-          throw new Error(`Content validation failed: ${formatted.errors.join(', ')}`);
+          const errorMsg = `Content validation failed: ${formatted.errors.join(', ')}`;
+          realTimeStatusService.sendErrorStatus(this.businessId, contentId, platform, errorMsg);
+          throw new Error(errorMsg);
         } else if (!options.autoFixContent) {
-          throw new Error(`Content validation failed: ${formatted.errors.join(', ')}`);
+          const errorMsg = `Content validation failed: ${formatted.errors.join(', ')}`;
+          realTimeStatusService.sendErrorStatus(this.businessId, contentId, platform, errorMsg);
+          throw new Error(errorMsg);
         }
       }
 
       // If dry run, return without publishing
       if (options.dryRun) {
+        realTimeStatusService.sendCompletionStatus(this.businessId, contentId, true, [platform], { dryRun: true });
         result.success = true;
         return result;
       }
+
+      // Send publishing start status
+      realTimeStatusService.sendPublishingStatus(this.businessId, contentId, platform, 'started', `Starting to publish to ${platform}`);
 
       // Initialize social media manager
       await this.initializeSocialMediaManager();
@@ -120,6 +146,16 @@ export class EnhancedPublisher {
       result.publishResult = publishResult;
 
       if (publishResult.success) {
+        // Send publishing success status
+        realTimeStatusService.sendPublishingStatus(
+          this.businessId, 
+          contentId, 
+          platform, 
+          'success', 
+          `Successfully published to ${platform}`,
+          { platformPostId: publishResult.platformPostId }
+        );
+
         // Update content status and platform post ID
         await storage.updateContentStatus(contentId, "published", new Date());
         if (publishResult.platformPostId) {
@@ -136,13 +172,21 @@ export class EnhancedPublisher {
 
         result.success = true;
         result.platformPostId = publishResult.platformPostId;
+
+        // Send completion status
+        realTimeStatusService.sendCompletionStatus(this.businessId, contentId, true, [platform], { publishResult });
       } else {
-        throw new Error(publishResult.error || "Publishing failed for unknown reason");
+        const errorMsg = publishResult.error || "Publishing failed for unknown reason";
+        realTimeStatusService.sendPublishingStatus(this.businessId, contentId, platform, 'error', errorMsg);
+        throw new Error(errorMsg);
       }
 
     } catch (error) {
       result.error = (error as Error).message;
       console.error(`Publishing failed for content ${contentId} on ${platform}:`, error);
+      
+      // Send error status update
+      realTimeStatusService.sendErrorStatus(this.businessId, contentId, platform, (error as Error).message);
       
       // Update content status to failed if not a dry run
       if (!options.dryRun) {
@@ -174,6 +218,18 @@ export class EnhancedPublisher {
     let successCount = 0;
     let failureCount = 0;
 
+    // Send initial multi-platform publishing status
+    realTimeStatusService.broadcastToBusinessClients(this.businessId, {
+      contentId,
+      businessId: this.businessId,
+      type: 'publishing',
+      status: 'started',
+      message: `Starting multi-platform publishing to ${platforms.join(', ')}`,
+      details: { platforms },
+      timestamp: new Date().toISOString(),
+      progress: 10
+    });
+
     for (const platform of platforms) {
       try {
         const result = await this.publishToPlatform(contentId, platform, options);
@@ -195,8 +251,21 @@ export class EnhancedPublisher {
         };
         results.push(errorResult);
         failureCount++;
+        
+        // Send error status for this platform
+        realTimeStatusService.sendErrorStatus(this.businessId, contentId, platform, (error as Error).message);
       }
     }
+
+    // Send final multi-platform completion status
+    const overallSuccess = successCount > 0 && failureCount === 0;
+    realTimeStatusService.sendCompletionStatus(
+      this.businessId, 
+      contentId, 
+      overallSuccess, 
+      platforms, 
+      { successCount, failureCount, results }
+    );
 
     return {
       results,

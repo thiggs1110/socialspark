@@ -60,6 +60,10 @@ app.use((req, res, next) => {
   const { startAutomatedPublisher } = await import("./services/automatedPublisher");
   startAutomatedPublisher();
 
+  // Initialize real-time status service
+  const { realTimeStatusService } = await import("./services/realTimeStatusService");
+  realTimeStatusService.initialize(server);
+
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.
@@ -71,5 +75,6 @@ app.use((req, res, next) => {
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
+    log('Real-time WebSocket service initialized');
   });
 })();
