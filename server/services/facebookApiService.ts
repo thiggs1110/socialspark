@@ -552,6 +552,98 @@ export class FacebookApiService {
   }
 
   /**
+   * Reply to a Facebook comment
+   */
+  async replyToComment(pageAccessToken: string, commentId: string, message: string): Promise<{ id: string }> {
+    const response = await fetch(`${this.baseUrl}/${commentId}/comments`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Facebook API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Reply to an Instagram comment
+   */
+  async replyToInstagramComment(accessToken: string, commentId: string, message: string): Promise<{ id: string }> {
+    const response = await fetch(`${this.baseUrl}/${commentId}/replies`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Instagram API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Send a message to a Facebook page conversation
+   */
+  async sendPageMessage(pageAccessToken: string, recipientId: string, message: string): Promise<{ message_id: string }> {
+    const response = await fetch(`${this.baseUrl}/me/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_type: 'RESPONSE',
+        recipient: { id: recipientId },
+        message: { text: message }
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Facebook Messenger API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Send a message to an Instagram user
+   */
+  async sendInstagramMessage(igBusinessAccountId: string, pageAccessToken: string, igUserId: string, message: string): Promise<{ message_id: string }> {
+    const response = await fetch(`${this.baseUrl}/${igBusinessAccountId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'instagram',
+        recipient: { id: igUserId },
+        message: { text: message }
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Instagram Messaging API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
    * Verify webhook signature
    */
   verifyWebhookSignature(payload: string, signature: string): boolean {

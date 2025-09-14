@@ -46,6 +46,8 @@ export class TwitterApiService {
         'tweet.write',
         'users.read',
         'follows.read',
+        'dm.read',
+        'dm.write',
         'offline.access'
       ].join(' '),
       state: stateId,
@@ -148,7 +150,7 @@ export class TwitterApiService {
         accessToken,
         refreshToken,
         tokenExpiry: new Date(Date.now() + expiresIn * 1000),
-        tokenScopes: ['tweet.read', 'tweet.write', 'users.read', 'follows.read', 'offline.access'],
+        tokenScopes: ['tweet.read', 'tweet.write', 'users.read', 'follows.read', 'dm.read', 'dm.write', 'offline.access'],
         isActive: true,
         lastSyncAt: new Date(),
         accountInfo: {
@@ -344,6 +346,56 @@ export class TwitterApiService {
     if (!response.ok) {
       const error = await response.json();
       throw new Error(`Twitter API error: ${error.detail || error.title || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Reply to a tweet
+   */
+  async replyToTweet(accessToken: string, tweetId: string, text: string): Promise<{ data: { id: string; text: string } }> {
+    const response = await fetch(`${this.baseUrl}/tweets`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text,
+        reply: {
+          in_reply_to_tweet_id: tweetId
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Twitter API error: ${error.detail || error.title || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Send a direct message
+   */
+  async sendDirectMessage(accessToken: string, recipientId: string, text: string): Promise<{ dm_conversation_id: string; dm_event_id: string }> {
+    const response = await fetch(`${this.baseUrl}/dm_conversations/with/${recipientId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text,
+        media_id: undefined // Could be extended to support media
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Twitter DM API error: ${error.detail || error.title || 'Unknown error'}`);
     }
 
     return await response.json();

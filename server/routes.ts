@@ -1150,16 +1150,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { reply } = req.body;
+      const userId = req.user.id;
 
       if (!reply) {
-        return res.status(400).json({ message: "Reply is required" });
+        return res.status(400).json({ 
+          message: "Reply is required",
+          code: "MISSING_REPLY_MESSAGE"
+        });
       }
 
-      const updatedInteraction = await storage.updateInteractionReply(id, reply);
-      res.json(updatedInteraction);
+      // Get user's business
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ 
+          message: "Business not found",
+          code: "BUSINESS_NOT_FOUND"
+        });
+      }
+
+      // Send reply to platform and update database
+      const { unifiedResponseService } = await import("./services/unifiedResponseService");
+      const replyResult = await unifiedResponseService.sendReply({
+        interactionId: id,
+        message: reply,
+        businessId: business.id
+      });
+
+      if (!replyResult.success) {
+        // Determine appropriate status code based on error type
+        let statusCode = 500;
+        let errorCode = "PLATFORM_ERROR";
+        
+        if (replyResult.error) {
+          // Platform-specific error handling
+          if (replyResult.error.includes('not found') || replyResult.error.includes('not supported')) {
+            statusCode = 400;
+            errorCode = "FEATURE_NOT_SUPPORTED";
+          } else if (replyResult.error.includes('permission') || replyResult.error.includes('scope')) {
+            statusCode = 403;
+            errorCode = "INSUFFICIENT_PERMISSIONS";
+          } else if (replyResult.error.includes('Invalid') || replyResult.error.includes('format')) {
+            statusCode = 400;
+            errorCode = "INVALID_FORMAT";
+          } else if (replyResult.error.includes('token') || replyResult.error.includes('auth')) {
+            statusCode = 401;
+            errorCode = "AUTHENTICATION_ERROR";
+          }
+        }
+        
+        return res.status(statusCode).json({ 
+          message: "Failed to send reply to platform", 
+          error: replyResult.error,
+          platform: replyResult.platform,
+          code: errorCode,
+          context: {
+            interactionId: id,
+            platform: replyResult.platform
+          }
+        });
+      }
+
+      // Get updated interaction from database
+      const updatedInteraction = await storage.getInteractionById(id);
+      res.json({ 
+        interaction: updatedInteraction,
+        platformResponse: {
+          success: true,
+          platform: replyResult.platform,
+          platformResponseId: replyResult.platformResponseId
+        }
+      });
     } catch (error) {
       console.error("Error replying to interaction:", error);
-      res.status(500).json({ message: "Failed to reply to interaction" });
+      
+      // Handle structured errors from services
+      if (error && typeof error === 'object' && 'statusCode' in error) {
+        return res.status((error as any).statusCode).json({ 
+          message: error.message,
+          code: (error as any).code || "SERVICE_ERROR",
+          context: { interactionId: id }
+        });
+      }
+      
+      res.status(500).json({ 
+        message: "Failed to reply to interaction",
+        code: "INTERNAL_ERROR",
+        context: { interactionId: id }
+      });
     }
   });
 

@@ -401,6 +401,65 @@ export class LinkedInApiService {
   }
 
   /**
+   * Reply to a LinkedIn comment
+   */
+  async replyToComment(accessToken: string, commentId: string, text: string, actorUrn?: string): Promise<{ id: string }> {
+    if (!actorUrn) {
+      throw new Error('LinkedIn actor URN is required for comment replies. Please reconnect your LinkedIn account.');
+    }
+
+    const response = await fetch(`${this.baseUrl}/socialActions/${commentId}/comments`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Restli-Protocol-Version': '2.0.0'
+      },
+      body: JSON.stringify({
+        actor: actorUrn, // Use actual member or organization URN from connection
+        message: {
+          text
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`LinkedIn API error: ${error.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Send a LinkedIn message
+   */
+  async sendMessage(accessToken: string, recipientUrn: string, subject: string, text: string): Promise<{ id: string }> {
+    const response = await fetch(`${this.baseUrl}/messaging/conversations`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Restli-Protocol-Version': '2.0.0'
+      },
+      body: JSON.stringify({
+        recipients: [recipientUrn],
+        subject,
+        body: {
+          text
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`LinkedIn Messaging API error: ${error.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
    * Check if service is configured
    */
   isConfigured(): boolean {

@@ -97,6 +97,7 @@ export interface IStorage {
   getInteractionsByBusinessId(businessId: string, limit?: number, offset?: number): Promise<Interaction[]>;
   markInteractionAsRead(id: string): Promise<void>;
   updateInteractionReply(id: string, reply: string): Promise<Interaction | undefined>;
+  getInteractionById(id: string): Promise<Interaction | undefined>;
 
   // Social media post operations
   createSocialMediaPost(post: InsertSocialMediaPost): Promise<SocialMediaPost>;
@@ -473,6 +474,14 @@ export class DatabaseStorage implements IStorage {
       .where(eq(interactions.id, id))
       .returning();
     return updatedInteraction;
+  }
+
+  async getInteractionById(id: string): Promise<Interaction | undefined> {
+    const [interaction] = await db
+      .select()
+      .from(interactions)
+      .where(eq(interactions.id, id));
+    return interaction;
   }
 
   // Scheduling operations
