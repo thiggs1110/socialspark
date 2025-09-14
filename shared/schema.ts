@@ -74,13 +74,19 @@ export const brandVoices = pgTable("brand_voices", {
 export const platformConnections = pgTable("platform_connections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   businessId: varchar("business_id").notNull().references(() => businesses.id, { onDelete: "cascade" }),
-  platform: varchar("platform").notNull(), // facebook, instagram, linkedin, twitter, pinterest, blog, email
+  platform: varchar("platform").notNull(), // facebook, instagram, linkedin, twitter, pinterest, tiktok, youtube
   platformUserId: varchar("platform_user_id"),
+  platformUsername: varchar("platform_username"),
+  platformDisplayName: varchar("platform_display_name"),
+  platformProfilePic: varchar("platform_profile_pic"),
   accessToken: text("access_token"),
   refreshToken: text("refresh_token"),
   tokenExpiry: timestamp("token_expiry"),
+  tokenScopes: varchar("token_scopes").array(), // OAuth scopes granted
   isActive: boolean("is_active").default(true),
+  lastSyncAt: timestamp("last_sync_at"), // Last time we synced data from platform
   settings: jsonb("settings"), // Platform-specific settings
+  accountInfo: jsonb("account_info"), // Platform-specific account details
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -159,6 +165,37 @@ export const schedulingSettings = pgTable("scheduling_settings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Webhook configurations for real-time updates
+export const webhookConfigurations = pgTable("webhook_configurations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  businessId: varchar("business_id").notNull().references(() => businesses.id, { onDelete: "cascade" }),
+  platform: varchar("platform").notNull(),
+  webhookUrl: varchar("webhook_url").notNull(),
+  webhookSecret: varchar("webhook_secret"),
+  eventTypes: varchar("event_types").array(), // ["comment", "message", "mention", "post_published"]
+  isActive: boolean("is_active").default(true),
+  lastVerifiedAt: timestamp("last_verified_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Social media posts fetched from platforms (for monitoring)
+export const socialMediaPosts = pgTable("social_media_posts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  businessId: varchar("business_id").notNull().references(() => businesses.id, { onDelete: "cascade" }),
+  platformConnectionId: varchar("platform_connection_id").notNull().references(() => platformConnections.id, { onDelete: "cascade" }),
+  platform: varchar("platform").notNull(),
+  platformPostId: varchar("platform_post_id").notNull(),
+  postType: varchar("post_type"), // "post", "story", "reel", "video", etc.
+  content: text("content"),
+  mediaUrls: varchar("media_urls").array(),
+  publishedAt: timestamp("published_at"),
+  metrics: jsonb("metrics"), // Platform-specific engagement metrics
+  isOwn: boolean("is_own").default(false), // Whether this is our own post or someone else's
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   business: one(businesses, {
@@ -180,6 +217,8 @@ export const businessRelations = relations(businesses, ({ one, many }) => ({
   content: many(content),
   interactions: many(interactions),
   schedulingSettings: many(schedulingSettings),
+  webhookConfigurations: many(webhookConfigurations),
+  socialMediaPosts: many(socialMediaPosts),
 }));
 
 export const brandVoiceRelations = relations(brandVoices, ({ one }) => ({
@@ -189,11 +228,12 @@ export const brandVoiceRelations = relations(brandVoices, ({ one }) => ({
   }),
 }));
 
-export const platformConnectionRelations = relations(platformConnections, ({ one }) => ({
+export const platformConnectionRelations = relations(platformConnections, ({ one, many }) => ({
   business: one(businesses, {
     fields: [platformConnections.businessId],
     references: [businesses.id],
   }),
+  socialMediaPosts: many(socialMediaPosts),
 }));
 
 export const contentRelations = relations(content, ({ one, many }) => ({
@@ -230,6 +270,24 @@ export const schedulingSettingsRelations = relations(schedulingSettings, ({ one 
   business: one(businesses, {
     fields: [schedulingSettings.businessId],
     references: [businesses.id],
+  }),
+}));
+
+export const webhookConfigurationRelations = relations(webhookConfigurations, ({ one }) => ({
+  business: one(businesses, {
+    fields: [webhookConfigurations.businessId],
+    references: [businesses.id],
+  }),
+}));
+
+export const socialMediaPostRelations = relations(socialMediaPosts, ({ one }) => ({
+  business: one(businesses, {
+    fields: [socialMediaPosts.businessId],
+    references: [businesses.id],
+  }),
+  platformConnection: one(platformConnections, {
+    fields: [socialMediaPosts.platformConnectionId],
+    references: [platformConnections.id],
   }),
 }));
 
@@ -279,6 +337,18 @@ export const insertSchedulingSettingsSchema = createInsertSchema(schedulingSetti
   updatedAt: true,
 });
 
+export const insertWebhookConfigurationSchema = createInsertSchema(webhookConfigurations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSocialMediaPostSchema = createInsertSchema(socialMediaPosts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type UpsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -296,6 +366,10 @@ export type Interaction = typeof interactions.$inferSelect;
 export type InsertInteraction = z.infer<typeof insertInteractionSchema>;
 export type SchedulingSettings = typeof schedulingSettings.$inferSelect;
 export type InsertSchedulingSettings = z.infer<typeof insertSchedulingSettingsSchema>;
+export type WebhookConfiguration = typeof webhookConfigurations.$inferSelect;
+export type InsertWebhookConfiguration = z.infer<typeof insertWebhookConfigurationSchema>;
+export type SocialMediaPost = typeof socialMediaPosts.$inferSelect;
+export type InsertSocialMediaPost = z.infer<typeof insertSocialMediaPostSchema>;
 
 // Subscription plans
 export const subscriptionPlans = pgTable("subscription_plans", {
