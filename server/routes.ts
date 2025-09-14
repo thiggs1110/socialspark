@@ -9,6 +9,7 @@ import { EnhancedPublisher, publishContent } from "./services/enhancedPublisher"
 import { generateReplyToInteraction, analyzeWebsiteForBrandVoice } from "./services/anthropic";
 import { SocialMediaManager } from "./services/socialMediaApi";
 import { SubscriptionService } from "./services/subscriptionService";
+import { WebhookEventProcessorService } from "./services/webhookEventProcessor";
 import { insertBusinessSchema, insertBrandVoiceSchema, insertPlatformConnectionSchema, insertSchedulingSettingsSchema } from "@shared/schema";
 import { z } from "zod";
 import Stripe from "stripe";
@@ -1455,6 +1456,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     );
   }
 
+  // Create webhook processor instance for event handling
+  const webhookEventProcessor = new WebhookEventProcessorService();
+
   // Social Media Webhook Endpoints
 
   // Facebook/Instagram webhook endpoint
@@ -1496,7 +1500,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (entry.changes) {
             for (const change of entry.changes) {
               console.log('[webhook] Facebook change:', change.field, change.value);
-              // TODO: Process comment/message events to update interactions
+              // Process Facebook events using webhook processor
+              await webhookEventProcessor.processFacebookEvent(entry, change);
             }
           }
         }
@@ -1511,7 +1516,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (entry.changes) {
             for (const change of entry.changes) {
               console.log('[webhook] Instagram change:', change.field, change.value);
-              // TODO: Process Instagram comment/message events
+              // Process Instagram events using webhook processor
+              await webhookEventProcessor.processInstagramEvent(entry, change);
             }
           }
         }
@@ -1521,7 +1527,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.object === 'user') {
         for (const entry of body.entry) {
           console.log('[webhook] User-level event received:', entry);
-          // TODO: Process user-level Instagram events
+          // Process user-level Instagram events using webhook processor
+          if (entry.changes) {
+            for (const change of entry.changes) {
+              await webhookEventProcessor.processInstagramEvent(entry, change);
+            }
+          }
         }
       }
       
@@ -1569,14 +1580,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.tweet_create_events) {
         for (const tweet of body.tweet_create_events) {
           console.log('[webhook] Twitter tweet event:', tweet.id_str);
-          // TODO: Process tweet mentions/replies to update interactions
+          // Process Twitter tweet events using webhook processor
+          await webhookEventProcessor.processTwitterTweetEvent(tweet);
         }
       }
       
       if (body.direct_message_events) {
         for (const dm of body.direct_message_events) {
           console.log('[webhook] Twitter DM event:', dm.id);
-          // TODO: Process direct messages to update interactions
+          // Process Twitter DM events using webhook processor
+          await webhookEventProcessor.processTwitterDMEvent(dm);
         }
       }
       
@@ -1584,7 +1597,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.follow_events) {
         for (const follow of body.follow_events) {
           console.log('[webhook] Twitter follow event:', follow);
-          // TODO: Process follow events
+          // Note: Follow events are logged but not processed as interactions
         }
       }
       
@@ -1592,7 +1605,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.favorite_events) {
         for (const favorite of body.favorite_events) {
           console.log('[webhook] Twitter favorite event:', favorite);
-          // TODO: Process favorite/like events
+          // Note: Favorite events are logged but not processed as interactions
         }
       }
       
@@ -1624,19 +1637,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Handle LinkedIn post engagements
       if (body.activity && body.activity.type) {
         console.log('[webhook] LinkedIn activity:', body.activity.type);
-        // TODO: Process LinkedIn post engagement events
+        // Process LinkedIn events using webhook processor
+        await webhookEventProcessor.processLinkedInEvent(body);
       }
       
       // Handle LinkedIn direct messages
       if (body.eventType === 'DIRECT_MESSAGE') {
         console.log('[webhook] LinkedIn direct message event');
-        // TODO: Process LinkedIn direct message events
+        // Process LinkedIn DM events using webhook processor
+        await webhookEventProcessor.processLinkedInEvent(body);
       }
       
       // Handle LinkedIn member interactions
       if (body.eventType === 'MEMBER_INTERACTION') {
         console.log('[webhook] LinkedIn member interaction event');
-        // TODO: Process member interaction events
+        // Process LinkedIn member interaction events using webhook processor
+        await webhookEventProcessor.processLinkedInEvent(body);
       }
       
       res.status(200).json({ received: true });
@@ -1685,7 +1701,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (entry.changes) {
             for (const change of entry.changes) {
               console.log('[webhook] Instagram change:', change.field, change.value);
-              // TODO: Process Instagram-specific events (comments, mentions, story interactions)
+              // Process Instagram-specific events using webhook processor
+              await webhookEventProcessor.processInstagramEvent(entry, change);
             }
           }
         }

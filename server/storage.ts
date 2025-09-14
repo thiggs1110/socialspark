@@ -111,6 +111,8 @@ export interface IStorage {
 
   // Platform connection helper methods
   getAllActivePlatformConnections(): Promise<PlatformConnection[]>;
+  getPlatformConnectionByPlatformUserId(platform: string, platformUserId: string): Promise<PlatformConnection | undefined>;
+  getActiveConnectionByPlatform(platform: string): Promise<PlatformConnection | undefined>;
 
   // Scheduling operations
   createSchedulingSettings(settings: InsertSchedulingSettings): Promise<SchedulingSettings>;
@@ -881,6 +883,27 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(platformConnections)
       .where(eq(platformConnections.isActive, true))
       .orderBy(desc(platformConnections.createdAt));
+  }
+
+  async getPlatformConnectionByPlatformUserId(platform: string, platformUserId: string): Promise<PlatformConnection | undefined> {
+    const [connection] = await db.select().from(platformConnections)
+      .where(and(
+        eq(platformConnections.platform, platform),
+        eq(platformConnections.platformUserId, platformUserId),
+        eq(platformConnections.isActive, true)
+      ));
+    return connection;
+  }
+
+  async getActiveConnectionByPlatform(platform: string): Promise<PlatformConnection | undefined> {
+    const [connection] = await db.select().from(platformConnections)
+      .where(and(
+        eq(platformConnections.platform, platform),
+        eq(platformConnections.isActive, true)
+      ))
+      .orderBy(desc(platformConnections.createdAt))
+      .limit(1);
+    return connection;
   }
 
   // Trial management operations
