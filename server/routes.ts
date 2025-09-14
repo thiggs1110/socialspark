@@ -103,6 +103,259 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // OAuth initiation routes for each platform
+  app.get('/api/oauth/:platform/authorize', isAuthenticated, async (req: any, res) => {
+    try {
+      const { platform } = req.params;
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const state = JSON.stringify({ userId, businessId: business.id });
+      const encodedState = Buffer.from(state).toString('base64');
+
+      const oauthUrls = {
+        facebook: () => {
+          const clientId = process.env.FACEBOOK_CLIENT_ID;
+          const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/facebook/callback`);
+          const scope = encodeURIComponent('pages_manage_posts,pages_read_engagement,instagram_basic,instagram_content_publish');
+          return `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}`;
+        },
+        linkedin: () => {
+          const clientId = process.env.LINKEDIN_CLIENT_ID;
+          const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/linkedin/callback`);
+          const scope = encodeURIComponent('w_member_social');
+          return `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}`;
+        },
+        twitter: () => {
+          const clientId = process.env.TWITTER_CLIENT_ID;
+          const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/twitter/callback`);
+          const scope = encodeURIComponent('tweet.read tweet.write users.read');
+          return `https://twitter.com/i/oauth2/authorize?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}&code_challenge=challenge&code_challenge_method=plain`;
+        },
+        pinterest: () => {
+          const clientId = process.env.PINTEREST_CLIENT_ID;
+          const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/pinterest/callback`);
+          const scope = encodeURIComponent('boards:read,pins:read,pins:write');
+          return `https://www.pinterest.com/oauth/?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}`;
+        }
+      };
+
+      const authUrlGenerator = oauthUrls[platform as keyof typeof oauthUrls];
+      if (!authUrlGenerator) {
+        return res.status(400).json({ message: "Unsupported platform" });
+      }
+
+      const authUrl = authUrlGenerator();
+      res.json({ authUrl });
+    } catch (error) {
+      console.error(`Error initiating ${req.params.platform} OAuth:`, error);
+      res.status(500).json({ message: "Failed to initiate OAuth" });
+    }
+  });
+
+  // OAuth callback routes for each platform
+  app.get('/api/oauth/:platform/callback', async (req: any, res) => {
+    try {
+      const { platform } = req.params;
+      const { code, state, error } = req.query;
+
+      if (error) {
+        return res.redirect(`/?error=oauth_error&platform=${platform}&details=${error}`);
+      }
+
+      if (!code || !state) {
+        return res.redirect(`/?error=oauth_missing_params&platform=${platform}`);
+      }
+
+      // Decode state to get user and business info
+      const decodedState = JSON.parse(Buffer.from(state as string, 'base64').toString());
+      const { userId, businessId } = decodedState;
+
+      // Exchange code for access token based on platform
+      const tokenHandlers = {
+        facebook: async (authCode: string) => {
+          const clientId = process.env.FACEBOOK_CLIENT_ID;
+          const clientSecret = process.env.FACEBOOK_CLIENT_SECRET;
+          const redirectUri = `${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/facebook/callback`;
+          
+          const tokenResponse = await fetch(`https://graph.facebook.com/v18.0/oauth/access_token?client_id=${clientId}&client_secret=${clientSecret}&code=${authCode}&redirect_uri=${encodeURIComponent(redirectUri)}`);
+          const tokenData = await tokenResponse.json();
+          
+          if (tokenData.error) {
+            throw new Error(`Facebook OAuth error: ${tokenData.error.message}`);
+          }
+
+          // Get user info from Facebook
+          const userResponse = await fetch(`https://graph.facebook.com/v18.0/me?access_token=${tokenData.access_token}&fields=id,name,email`);
+          const userData = await userResponse.json();
+
+          return {
+            accessToken: tokenData.access_token,
+            refreshToken: null,
+            tokenExpiry: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : null,
+            platformUserId: userData.id,
+            settings: { 
+              userName: userData.name, 
+              email: userData.email,
+              tokenType: 'user_access_token'
+            }
+          };
+        },
+        linkedin: async (authCode: string) => {
+          const clientId = process.env.LINKEDIN_CLIENT_ID;
+          const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+          const redirectUri = `${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/linkedin/callback`;
+          
+          const tokenResponse = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'authorization_code',
+              code: authCode,
+              redirect_uri: redirectUri,
+              client_id: clientId!,
+              client_secret: clientSecret!
+            })
+          });
+          
+          const tokenData = await tokenResponse.json();
+          
+          if (tokenData.error) {
+            throw new Error(`LinkedIn OAuth error: ${tokenData.error_description}`);
+          }
+
+          // Get user info from LinkedIn
+          const userResponse = await fetch('https://api.linkedin.com/v2/userinfo', {
+            headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
+          });
+          const userData = await userResponse.json();
+
+          return {
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token || null,
+            tokenExpiry: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : null,
+            platformUserId: userData.sub,
+            settings: { 
+              userName: userData.name, 
+              email: userData.email 
+            }
+          };
+        },
+        twitter: async (authCode: string) => {
+          const clientId = process.env.TWITTER_CLIENT_ID;
+          const clientSecret = process.env.TWITTER_CLIENT_SECRET;
+          const redirectUri = `${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/twitter/callback`;
+          
+          const tokenResponse = await fetch('https://api.twitter.com/2/oauth2/token', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`
+            },
+            body: new URLSearchParams({
+              grant_type: 'authorization_code',
+              code: authCode,
+              redirect_uri: redirectUri,
+              code_verifier: 'challenge'
+            })
+          });
+          
+          const tokenData = await tokenResponse.json();
+          
+          if (tokenData.error) {
+            throw new Error(`Twitter OAuth error: ${tokenData.error_description}`);
+          }
+
+          // Get user info from Twitter
+          const userResponse = await fetch('https://api.twitter.com/2/users/me', {
+            headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
+          });
+          const userData = await userResponse.json();
+
+          return {
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token || null,
+            tokenExpiry: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : null,
+            platformUserId: userData.data?.id,
+            settings: { 
+              userName: userData.data?.username, 
+              displayName: userData.data?.name 
+            }
+          };
+        },
+        pinterest: async (authCode: string) => {
+          const clientId = process.env.PINTEREST_CLIENT_ID;
+          const clientSecret = process.env.PINTEREST_CLIENT_SECRET;
+          const redirectUri = `${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/pinterest/callback`;
+          
+          const tokenResponse = await fetch('https://api.pinterest.com/v5/oauth/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'authorization_code',
+              code: authCode,
+              redirect_uri: redirectUri,
+              client_id: clientId!,
+              client_secret: clientSecret!
+            })
+          });
+          
+          const tokenData = await tokenResponse.json();
+          
+          if (tokenData.error) {
+            throw new Error(`Pinterest OAuth error: ${tokenData.error_description}`);
+          }
+
+          // Get user info from Pinterest
+          const userResponse = await fetch('https://api.pinterest.com/v5/user_account', {
+            headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
+          });
+          const userData = await userResponse.json();
+
+          return {
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token || null,
+            tokenExpiry: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000) : null,
+            platformUserId: userData.username,
+            settings: { 
+              userName: userData.username,
+              accountType: userData.account_type 
+            }
+          };
+        }
+      };
+
+      const tokenHandler = tokenHandlers[platform as keyof typeof tokenHandlers];
+      if (!tokenHandler) {
+        return res.redirect(`/?error=unsupported_platform&platform=${platform}`);
+      }
+
+      const tokenData = await tokenHandler(code as string);
+
+      // Store the platform connection
+      await storage.createPlatformConnection({
+        businessId,
+        platform,
+        platformUserId: tokenData.platformUserId,
+        accessToken: tokenData.accessToken,
+        refreshToken: tokenData.refreshToken,
+        tokenExpiry: tokenData.tokenExpiry,
+        isActive: true,
+        settings: tokenData.settings
+      });
+
+      // Redirect back to platform connections page with success
+      res.redirect(`/platforms?success=connected&platform=${platform}`);
+    } catch (error) {
+      console.error(`Error handling ${req.params.platform} OAuth callback:`, error);
+      res.redirect(`/?error=oauth_callback_error&platform=${req.params.platform}&details=${encodeURIComponent((error as Error).message)}`);
+    }
+  });
+
   // Platform connections routes
   app.post('/api/platform-connections', isAuthenticated, async (req: any, res) => {
     try {
