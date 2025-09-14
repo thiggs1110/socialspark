@@ -132,6 +132,15 @@ export interface IStorage {
     churnedUsers: number;
   }>;
 
+  // Trial management operations
+  getExpiringTrials(startDate: Date, endDate: Date): Promise<UserSubscription[]>;
+  getExpiredTrials(currentDate: Date): Promise<UserSubscription[]>;
+  markTrialReminderSent(subscriptionId: string): Promise<void>;
+  markTrialExpirationNotificationSent(subscriptionId: string): Promise<void>;
+  countTrialsByStatus(status: string | 'all'): Promise<number>;
+  updateSubscriptionStatus(subscriptionId: string, status: string): Promise<UserSubscription | undefined>;
+  getUserById(userId: string): Promise<User | undefined>;
+
   // Payment history operations
   createPaymentHistory(payment: InsertPaymentHistory): Promise<PaymentHistory>;
   getPaymentHistoryByUser(userId: string): Promise<PaymentHistory[]>;
@@ -799,6 +808,68 @@ export class DatabaseStorage implements IStorage {
       .where(eq(discountLinks.id, id))
       .returning();
     return updated;
+  }
+
+  // Trial management operations
+  async getExpiringTrials(startDate: Date, endDate: Date): Promise<UserSubscription[]> {
+    return await db.select().from(userSubscriptions)
+      .where(and(
+        eq(userSubscriptions.status, "trialing"),
+        sql`${userSubscriptions.trialEndsAt} >= ${startDate}`,
+        sql`${userSubscriptions.trialEndsAt} <= ${endDate}`,
+        sql`${userSubscriptions.reminderSentAt} IS NULL` // Only get trials that haven't been reminded
+      ))
+      .orderBy(userSubscriptions.trialEndsAt);
+  }
+
+  async getExpiredTrials(currentDate: Date): Promise<UserSubscription[]> {
+    return await db.select().from(userSubscriptions)
+      .where(and(
+        eq(userSubscriptions.status, "trialing"),
+        sql`${userSubscriptions.trialEndsAt} < ${currentDate}`,
+        sql`${userSubscriptions.expirationNotifiedAt} IS NULL` // Only get trials that haven't been notified
+      ))
+      .orderBy(userSubscriptions.trialEndsAt);
+  }
+
+  async markTrialReminderSent(subscriptionId: string): Promise<void> {
+    await db.update(userSubscriptions)
+      .set({ reminderSentAt: new Date() })
+      .where(eq(userSubscriptions.id, subscriptionId));
+    console.log(`[storage] Trial reminder marked as sent for subscription ${subscriptionId}`);
+  }
+
+  async markTrialExpirationNotificationSent(subscriptionId: string): Promise<void> {
+    await db.update(userSubscriptions)
+      .set({ expirationNotifiedAt: new Date() })
+      .where(eq(userSubscriptions.id, subscriptionId));
+    console.log(`[storage] Trial expiration notification marked as sent for subscription ${subscriptionId}`);
+  }
+
+  async countTrialsByStatus(status: string | 'all'): Promise<number> {
+    if (status === 'all') {
+      const [result] = await db.select({ count: count() }).from(userSubscriptions);
+      return result.count;
+    }
+    
+    const [result] = await db.select({ count: count() }).from(userSubscriptions)
+      .where(eq(userSubscriptions.status, status));
+    return result.count;
+  }
+
+  async updateSubscriptionStatus(subscriptionId: string, status: string): Promise<UserSubscription | undefined> {
+    const [updated] = await db.update(userSubscriptions)
+      .set({ 
+        status,
+        updatedAt: new Date()
+      })
+      .where(eq(userSubscriptions.id, subscriptionId))
+      .returning();
+    return updated;
+  }
+
+  async getUserById(userId: string): Promise<User | undefined> {
+    return this.getUser(userId);
   }
 }
 

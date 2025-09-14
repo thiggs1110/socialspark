@@ -64,6 +64,10 @@ app.use((req, res, next) => {
   const { realTimeStatusService } = await import("./services/realTimeStatusService");
   realTimeStatusService.initialize(server);
 
+  // Start trial management service
+  const { scheduledTrialManager } = await import("./services/scheduledTrialManager");
+  scheduledTrialManager.start();
+
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.

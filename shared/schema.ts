@@ -326,6 +326,8 @@ export const userSubscriptions = pgTable("user_subscriptions", {
   cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false),
   affiliateId: varchar("affiliate_id"), // Track referrals - will add FK after tables defined
   discountLinkId: varchar("discount_link_id"), // Track discount usage - will add FK after tables defined
+  reminderSentAt: timestamp("reminder_sent_at"), // Track when trial reminder was sent
+  expirationNotifiedAt: timestamp("expiration_notified_at"), // Track when expiration notification was sent
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

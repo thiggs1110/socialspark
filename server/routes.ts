@@ -1341,6 +1341,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Trial management statistics
+  app.get("/api/admin/trials/stats", isAuthenticated, requireAdmin, async (req: any, res) => {
+    try {
+      const { scheduledTrialManager } = await import("./services/scheduledTrialManager");
+      const trialStats = await scheduledTrialManager.getTrialStatistics();
+      res.json(trialStats);
+    } catch (error) {
+      console.error("Error getting trial statistics:", error);
+      res.status(500).json({ error: "Failed to get trial statistics" });
+    }
+  });
+
   app.get('/api/admin/affiliates', isAuthenticated, requireAdmin, async (req: any, res) => {
     try {
       const affiliates = await storage.getAllAffiliates();
