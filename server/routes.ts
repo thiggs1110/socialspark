@@ -3,12 +3,15 @@ import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { requireAdmin, requireActiveSubscription } from "./middleware/adminAuth";
 import { generateBatchContent, saveBatchContentAsDrafts, scheduleContent } from "./services/contentGenerator";
 import { EnhancedPublisher, publishContent } from "./services/enhancedPublisher";
 import { generateReplyToInteraction, analyzeWebsiteForBrandVoice } from "./services/anthropic";
 import { SocialMediaManager } from "./services/socialMediaApi";
+import { SubscriptionService } from "./services/subscriptionService";
 import { insertBusinessSchema, insertBrandVoiceSchema, insertPlatformConnectionSchema, insertSchedulingSettingsSchema } from "@shared/schema";
 import { z } from "zod";
+import Stripe from "stripe";
 
 // Enhanced publishing validation schemas
 const platformPublishSchema = z.object({
@@ -1245,6 +1248,208 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching scheduling settings:", error);
       res.status(500).json({ message: "Failed to fetch scheduling settings" });
+    }
+  });
+
+  // Initialize subscription plans on startup
+  await SubscriptionService.initializePlans();
+
+  // Subscription API endpoints
+  app.get('/api/subscription/status', isAuthenticated, async (req: any, res) => {
+    try {
+      const status = await SubscriptionService.getSubscriptionStatus(req.user.id);
+      res.json(status);
+    } catch (error) {
+      console.error("Error getting subscription status:", error);
+      res.status(500).json({ error: "Failed to get subscription status" });
+    }
+  });
+
+  app.post('/api/subscription/start-trial', isAuthenticated, async (req: any, res) => {
+    try {
+      const { planType, affiliateCode, discountLinkCode } = req.body;
+      const result = await SubscriptionService.startTrial(
+        req.user.id, 
+        planType, 
+        affiliateCode, 
+        discountLinkCode
+      );
+      res.json(result);
+    } catch (error) {
+      console.error("Error starting trial:", error);
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed to start trial" });
+    }
+  });
+
+  app.post('/api/subscription/convert', isAuthenticated, async (req: any, res) => {
+    try {
+      const { paymentMethodId } = req.body;
+      const subscription = await SubscriptionService.convertToSubscription(req.user.id, paymentMethodId);
+      res.json({ subscription });
+    } catch (error) {
+      console.error("Error converting subscription:", error);
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed to convert subscription" });
+    }
+  });
+
+  // Stripe webhook endpoint
+  app.post('/webhook/stripe', async (req, res) => {
+    const sig = req.headers['stripe-signature'] as string;
+    
+    try {
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+        apiVersion: "2023-10-16",
+      });
+      
+      // Verify webhook signature
+      const event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET!);
+      
+      // Handle the event
+      await SubscriptionService.handleStripeWebhook(event);
+      
+      res.json({ received: true });
+    } catch (error) {
+      console.error("Webhook error:", error);
+      res.status(400).json({ error: "Webhook error" });
+    }
+  });
+
+  // Admin API endpoints
+  app.get('/api/admin/users', isAuthenticated, requireAdmin, async (req: any, res) => {
+    try {
+      const { limit = 50, offset = 0 } = req.query;
+      const users = await storage.getAllUsers(parseInt(limit), parseInt(offset));
+      const stats = await storage.getUserStats();
+      res.json({ users, stats });
+    } catch (error) {
+      console.error("Error getting admin users:", error);
+      res.status(500).json({ error: "Failed to get users" });
+    }
+  });
+
+  app.get('/api/admin/revenue', isAuthenticated, requireAdmin, async (req: any, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const start = startDate ? new Date(startDate as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const end = endDate ? new Date(endDate as string) : new Date();
+      
+      const revenueStats = await storage.getRevenueStats(start, end);
+      res.json(revenueStats);
+    } catch (error) {
+      console.error("Error getting revenue stats:", error);
+      res.status(500).json({ error: "Failed to get revenue stats" });
+    }
+  });
+
+  app.get('/api/admin/affiliates', isAuthenticated, requireAdmin, async (req: any, res) => {
+    try {
+      const affiliates = await storage.getAllAffiliates();
+      res.json(affiliates);
+    } catch (error) {
+      console.error("Error getting affiliates:", error);
+      res.status(500).json({ error: "Failed to get affiliates" });
+    }
+  });
+
+  app.post('/api/admin/discount-links', isAuthenticated, requireAdmin, async (req: any, res) => {
+    try {
+      const discountLink = await SubscriptionService.createDiscountLink(req.user.id, req.body);
+      res.json(discountLink);
+    } catch (error) {
+      console.error("Error creating discount link:", error);
+      res.status(500).json({ error: "Failed to create discount link" });
+    }
+  });
+
+  app.get('/api/admin/discount-links', isAuthenticated, requireAdmin, async (req: any, res) => {
+    try {
+      const discountLinks = await storage.getAllDiscountLinks();
+      res.json(discountLinks);
+    } catch (error) {
+      console.error("Error getting discount links:", error);
+      res.status(500).json({ error: "Failed to get discount links" });
+    }
+  });
+
+  app.post('/api/admin/create-admin', isAuthenticated, requireAdmin, async (req: any, res) => {
+    try {
+      const { userId, role = "admin" } = req.body;
+      const adminUser = await storage.createAdminUser({
+        userId,
+        role,
+        createdBy: req.user.id,
+      });
+      res.json(adminUser);
+    } catch (error) {
+      console.error("Error creating admin user:", error);
+      res.status(500).json({ error: "Failed to create admin user" });
+    }
+  });
+
+  // Affiliate program endpoints
+  app.post('/api/affiliate/apply', isAuthenticated, async (req: any, res) => {
+    try {
+      const { commissionRate = 30 } = req.body;
+      const affiliate = await SubscriptionService.createAffiliate(req.user.id, commissionRate);
+      res.json(affiliate);
+    } catch (error) {
+      console.error("Error creating affiliate:", error);
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed to create affiliate" });
+    }
+  });
+
+  app.get('/api/affiliate/dashboard', isAuthenticated, async (req: any, res) => {
+    try {
+      const affiliate = await storage.getAffiliateByUserId(req.user.id);
+      if (!affiliate) {
+        return res.status(404).json({ error: "Affiliate not found" });
+      }
+
+      const referrals = await storage.getReferralsByAffiliate(affiliate.id);
+      const commissions = await storage.getCommissionsByAffiliate(affiliate.id);
+      
+      res.json({
+        affiliate,
+        referrals,
+        commissions
+      });
+    } catch (error) {
+      console.error("Error getting affiliate dashboard:", error);
+      res.status(500).json({ error: "Failed to get affiliate dashboard" });
+    }
+  });
+
+  // Public discount link verification
+  app.get('/api/discount/:code', async (req, res) => {
+    try {
+      const { code } = req.params;
+      const discountLink = await storage.getDiscountLinkByCode(code);
+      
+      if (!discountLink) {
+        return res.status(404).json({ error: "Discount link not found" });
+      }
+
+      // Check if discount is still valid
+      if (discountLink.expiresAt && new Date() > discountLink.expiresAt) {
+        return res.status(400).json({ error: "Discount link has expired" });
+      }
+
+      if (discountLink.usageLimit && discountLink.usageCount >= discountLink.usageLimit) {
+        return res.status(400).json({ error: "Discount link usage limit exceeded" });
+      }
+
+      res.json({
+        name: discountLink.name,
+        description: discountLink.description,
+        monthlyPrice: discountLink.monthlyPrice,
+        annualPrice: discountLink.annualPrice,
+        usageCount: discountLink.usageCount,
+        usageLimit: discountLink.usageLimit,
+        expiresAt: discountLink.expiresAt
+      });
+    } catch (error) {
+      console.error("Error getting discount link:", error);
+      res.status(500).json({ error: "Failed to get discount link" });
     }
   });
 
