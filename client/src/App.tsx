@@ -12,6 +12,7 @@ import Schedule from "@/pages/schedule";
 import Inbox from "@/pages/inbox";
 import Analytics from "@/pages/analytics";
 import Settings from "@/pages/settings";
+import Platforms from "@/pages/platforms";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -36,6 +37,7 @@ function Router() {
           <Route path="/inbox" component={Inbox} />
           <Route path="/analytics" component={Analytics} />
           <Route path="/settings" component={Settings} />
+          <Route path="/platforms" component={Platforms} />
         </>
       )}
       <Route component={NotFound} />

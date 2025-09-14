@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import crypto from "crypto";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { generateBatchContent, saveBatchContentAsDrafts, scheduleContent, publishContent } from "./services/contentGenerator";
@@ -7,6 +8,25 @@ import { generateReplyToInteraction, analyzeWebsiteForBrandVoice } from "./servi
 import { SocialMediaManager } from "./services/socialMediaApi";
 import { insertBusinessSchema, insertBrandVoiceSchema, insertPlatformConnectionSchema, insertSchedulingSettingsSchema } from "@shared/schema";
 import { z } from "zod";
+
+// Crypto utility functions for secure OAuth
+function generateSecureNonce(length: number = 32): string {
+  return crypto.randomBytes(length).toString('hex');
+}
+
+function generatePKCEPair() {
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  return { codeVerifier, codeChallenge };
+}
+
+function base64UrlEncode(str: string): string {
+  return Buffer.from(str)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -114,33 +134,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Business not found" });
       }
 
-      const state = JSON.stringify({ userId, businessId: business.id });
-      const encodedState = Buffer.from(state).toString('base64');
+      // Generate secure state nonce and store in session
+      const stateNonce = generateSecureNonce();
+      
+      // Initialize OAuth session storage if it doesn't exist
+      if (!req.session.oauth) {
+        req.session.oauth = {};
+      }
+      
+      // Store secure context in session (not in client-controlled state)
+      req.session.oauth[stateNonce] = {
+        userId,
+        businessId: business.id,
+        platform,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + (10 * 60 * 1000) // 10 minute expiry
+      };
+
+      // For Twitter, generate PKCE parameters
+      if (platform === 'twitter') {
+        const { codeVerifier, codeChallenge } = generatePKCEPair();
+        req.session.oauth[stateNonce].codeVerifier = codeVerifier;
+        req.session.oauth[stateNonce].codeChallenge = codeChallenge;
+      }
 
       const oauthUrls = {
         facebook: () => {
           const clientId = process.env.FACEBOOK_CLIENT_ID;
           const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/facebook/callback`);
           const scope = encodeURIComponent('pages_manage_posts,pages_read_engagement,instagram_basic,instagram_content_publish');
-          return `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}`;
+          return `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${stateNonce}`;
         },
         linkedin: () => {
           const clientId = process.env.LINKEDIN_CLIENT_ID;
           const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/linkedin/callback`);
           const scope = encodeURIComponent('w_member_social');
-          return `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}`;
+          return `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${stateNonce}`;
         },
         twitter: () => {
           const clientId = process.env.TWITTER_CLIENT_ID;
           const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/twitter/callback`);
           const scope = encodeURIComponent('tweet.read tweet.write users.read');
-          return `https://twitter.com/i/oauth2/authorize?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}&code_challenge=challenge&code_challenge_method=plain`;
+          const codeChallenge = req.session.oauth[stateNonce].codeChallenge;
+          return `https://twitter.com/i/oauth2/authorize?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${stateNonce}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
         },
         pinterest: () => {
           const clientId = process.env.PINTEREST_CLIENT_ID;
           const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/pinterest/callback`);
           const scope = encodeURIComponent('boards:read,pins:read,pins:write');
-          return `https://www.pinterest.com/oauth/?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${encodedState}`;
+          return `https://www.pinterest.com/oauth/?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${stateNonce}`;
         }
       };
 
@@ -164,16 +206,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { code, state, error } = req.query;
 
       if (error) {
-        return res.redirect(`/?error=oauth_error&platform=${platform}&details=${error}`);
+        return res.redirect(`/platforms?error=oauth_error&platform=${platform}&details=${encodeURIComponent(error as string)}`);
       }
 
       if (!code || !state) {
-        return res.redirect(`/?error=oauth_missing_params&platform=${platform}`);
+        return res.redirect(`/platforms?error=oauth_missing_params&platform=${platform}`);
       }
 
-      // Decode state to get user and business info
-      const decodedState = JSON.parse(Buffer.from(state as string, 'base64').toString());
-      const { userId, businessId } = decodedState;
+      // Validate state against session-stored OAuth context
+      const oauthContext = req.session?.oauth?.[state as string];
+      if (!oauthContext) {
+        console.error('OAuth state validation failed: no matching session context found');
+        return res.redirect(`/platforms?error=oauth_state_invalid&platform=${platform}`);
+      }
+
+      // Check if state has expired (10 minute window)
+      if (Date.now() > oauthContext.expiresAt) {
+        console.error('OAuth state validation failed: state expired');
+        delete req.session.oauth[state as string];
+        return res.redirect(`/platforms?error=oauth_state_expired&platform=${platform}`);
+      }
+
+      // Verify platform matches
+      if (oauthContext.platform !== platform) {
+        console.error('OAuth state validation failed: platform mismatch');
+        delete req.session.oauth[state as string];
+        return res.redirect(`/platforms?error=oauth_platform_mismatch&platform=${platform}`);
+      }
+
+      const { userId, businessId } = oauthContext;
+      
+      // Clean up used state from session
+      delete req.session.oauth[state as string];
 
       // Exchange code for access token based on platform
       const tokenHandlers = {
@@ -250,6 +314,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const clientSecret = process.env.TWITTER_CLIENT_SECRET;
           const redirectUri = `${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/twitter/callback`;
           
+          // Use the code_verifier from session-stored PKCE data
+          const codeVerifier = oauthContext.codeVerifier;
+          if (!codeVerifier) {
+            throw new Error('Missing PKCE code_verifier in session');
+          }
+          
           const tokenResponse = await fetch('https://api.twitter.com/2/oauth2/token', {
             method: 'POST',
             headers: { 
@@ -260,7 +330,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               grant_type: 'authorization_code',
               code: authCode,
               redirect_uri: redirectUri,
-              code_verifier: 'challenge'
+              code_verifier: codeVerifier
             })
           });
           
@@ -352,7 +422,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.redirect(`/platforms?success=connected&platform=${platform}`);
     } catch (error) {
       console.error(`Error handling ${req.params.platform} OAuth callback:`, error);
-      res.redirect(`/?error=oauth_callback_error&platform=${req.params.platform}&details=${encodeURIComponent((error as Error).message)}`);
+      res.redirect(`/platforms?error=oauth_callback_error&platform=${req.params.platform}&details=${encodeURIComponent((error as Error).message)}`);
     }
   });
 

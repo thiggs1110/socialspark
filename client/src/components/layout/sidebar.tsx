@@ -7,6 +7,7 @@ import {
   MessageSquare,
   BarChart,
   Settings,
+  Share2,
   Zap,
   User as UserIcon
 } from "lucide-react";
@@ -17,6 +18,7 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Content', href: '/content', icon: FileText },
   { name: 'Schedule', href: '/schedule', icon: Calendar },
+  { name: 'Platforms', href: '/platforms', icon: Share2 },
   { name: 'Inbox', href: '/inbox', icon: MessageSquare, badge: 3 },
   { name: 'Analytics', href: '/analytics', icon: BarChart },
   { name: 'Settings', href: '/settings', icon: Settings },
