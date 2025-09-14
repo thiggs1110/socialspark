@@ -5,7 +5,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { generateBatchContent, saveBatchContentAsDrafts, scheduleContent } from "./services/contentGenerator";
 import { EnhancedPublisher, publishContent } from "./services/enhancedPublisher";
-import { generateReplyToInteraction, analyzeWebsiteForBrandVoice } from "./services/openai";
+import { generateReplyToInteraction, analyzeWebsiteForBrandVoice } from "./services/anthropic";
 import { SocialMediaManager } from "./services/socialMediaApi";
 import { insertBusinessSchema, insertBrandVoiceSchema, insertPlatformConnectionSchema, insertSchedulingSettingsSchema } from "@shared/schema";
 import { z } from "zod";

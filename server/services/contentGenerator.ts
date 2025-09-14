@@ -1,4 +1,4 @@
-import { generateContent, ContentGenerationRequest } from "./openai";
+import { generateContent, ContentGenerationRequest } from "./anthropic";
 import { storage } from "../storage";
 import type { Business, BrandVoice, PlatformConnection, InsertContent } from "@shared/schema";
 
