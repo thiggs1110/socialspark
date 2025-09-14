@@ -14,6 +14,7 @@ import Analytics from "@/pages/analytics";
 import Settings from "@/pages/settings";
 import Platforms from "@/pages/platforms";
 import Subscription from "@/pages/subscription";
+import AdminDashboard from "@/pages/admin";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -40,6 +41,7 @@ function Router() {
           <Route path="/settings" component={Settings} />
           <Route path="/platforms" component={Platforms} />
           <Route path="/subscription" component={Subscription} />
+          <Route path="/admin" component={AdminDashboard} />
         </>
       )}
       <Route component={NotFound} />
