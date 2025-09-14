@@ -7,6 +7,7 @@ import {
   contentAnalytics,
   interactions,
   schedulingSettings,
+  socialMediaPosts,
   subscriptionPlans,
   userSubscriptions,
   adminUsers,
@@ -31,6 +32,8 @@ import {
   type InsertInteraction,
   type SchedulingSettings,
   type InsertSchedulingSettings,
+  type SocialMediaPost,
+  type InsertSocialMediaPost,
   type SubscriptionPlan,
   type InsertSubscriptionPlan,
   type UserSubscription,
@@ -91,9 +94,19 @@ export interface IStorage {
 
   // Interaction operations
   createInteraction(interaction: InsertInteraction): Promise<Interaction>;
-  getInteractionsByBusinessId(businessId: string, unreadOnly?: boolean): Promise<Interaction[]>;
+  getInteractionsByBusinessId(businessId: string, limit?: number, offset?: number): Promise<Interaction[]>;
   markInteractionAsRead(id: string): Promise<void>;
   updateInteractionReply(id: string, reply: string): Promise<Interaction | undefined>;
+
+  // Social media post operations
+  createSocialMediaPost(post: InsertSocialMediaPost): Promise<SocialMediaPost>;
+  getSocialMediaPostsByBusinessId(businessId: string, limit?: number, offset?: number): Promise<SocialMediaPost[]>;
+  getSocialMediaPostById(id: string): Promise<SocialMediaPost | undefined>;
+  updateSocialMediaPost(id: string, updates: Partial<InsertSocialMediaPost>): Promise<SocialMediaPost | undefined>;
+  deleteSocialMediaPost(id: string): Promise<void>;
+
+  // Platform connection helper methods
+  getAllActivePlatformConnections(): Promise<PlatformConnection[]>;
 
   // Scheduling operations
   createSchedulingSettings(settings: InsertSchedulingSettings): Promise<SchedulingSettings>;
@@ -439,18 +452,14 @@ export class DatabaseStorage implements IStorage {
     return newInteraction;
   }
 
-  async getInteractionsByBusinessId(businessId: string, unreadOnly: boolean = false): Promise<Interaction[]> {
-    const conditions = [eq(interactions.businessId, businessId)];
-    if (unreadOnly) {
-      conditions.push(eq(interactions.isRead, false));
-      conditions.push(eq(interactions.isReplied, false));
-    }
-
+  async getInteractionsByBusinessId(businessId: string, limit: number = 50, offset: number = 0): Promise<Interaction[]> {
     return await db
       .select()
       .from(interactions)
-      .where(and(...conditions))
-      .orderBy(desc(interactions.createdAt));
+      .where(eq(interactions.businessId, businessId))
+      .orderBy(desc(interactions.createdAt))
+      .limit(limit)
+      .offset(offset);
   }
 
   async markInteractionAsRead(id: string): Promise<void> {
@@ -814,6 +823,44 @@ export class DatabaseStorage implements IStorage {
       .where(eq(discountLinks.id, id))
       .returning();
     return updated;
+  }
+
+  // Social media post operations
+  async createSocialMediaPost(post: InsertSocialMediaPost): Promise<SocialMediaPost> {
+    const [newPost] = await db.insert(socialMediaPosts).values(post).returning();
+    return newPost;
+  }
+
+  async getSocialMediaPostsByBusinessId(businessId: string, limit: number = 50, offset: number = 0): Promise<SocialMediaPost[]> {
+    return await db.select().from(socialMediaPosts)
+      .where(eq(socialMediaPosts.businessId, businessId))
+      .orderBy(desc(socialMediaPosts.publishedAt))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async getSocialMediaPostById(id: string): Promise<SocialMediaPost | undefined> {
+    const [post] = await db.select().from(socialMediaPosts)
+      .where(eq(socialMediaPosts.id, id));
+    return post;
+  }
+
+  async updateSocialMediaPost(id: string, updates: Partial<InsertSocialMediaPost>): Promise<SocialMediaPost | undefined> {
+    const [updated] = await db.update(socialMediaPosts)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(socialMediaPosts.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteSocialMediaPost(id: string): Promise<void> {
+    await db.delete(socialMediaPosts).where(eq(socialMediaPosts.id, id));
+  }
+
+  async getAllActivePlatformConnections(): Promise<PlatformConnection[]> {
+    return await db.select().from(platformConnections)
+      .where(eq(platformConnections.isActive, true))
+      .orderBy(desc(platformConnections.createdAt));
   }
 
   // Trial management operations

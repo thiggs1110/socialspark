@@ -242,6 +242,165 @@ export class LinkedInApiService {
   }
 
   /**
+   * Fetch posts from LinkedIn profile or organization
+   */
+  async fetchLinkedInPosts(accessToken: string, entityUrn: string, count: number = 25, start: number = 0): Promise<{
+    elements: any[];
+    paging?: { start: number; count: number; total: number };
+  }> {
+    const params = new URLSearchParams({
+      q: 'author',
+      author: entityUrn,
+      start: start.toString(),
+      count: count.toString(),
+      projection: [
+        'elements*(',
+        'id,',
+        'author,',
+        'created,',
+        'lastModified,',
+        'content(article(title,description,source),contentEntities),',
+        'commentary,',
+        'distribution(distributedViaFollowFeed),',
+        'lifecycleState,',
+        'specific-content(share(text,media(category,media(digitalMediaAsset(id,artifacts,downloadUrl)))))',
+        ')'
+      ].join('')
+    });
+
+    const response = await fetch(`${this.baseUrl}/shares?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'X-Restli-Protocol-Version': '2.0.0'
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`LinkedIn API error: ${error.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch comments on a LinkedIn post
+   */
+  async fetchPostComments(accessToken: string, postUrn: string, count: number = 25, start: number = 0): Promise<{
+    elements: any[];
+    paging?: { start: number; count: number; total: number };
+  }> {
+    const params = new URLSearchParams({
+      q: 'object',
+      object: postUrn,
+      start: start.toString(),
+      count: count.toString(),
+      projection: [
+        'elements*(',
+        'id,',
+        'actor,',
+        'created,',
+        'lastModified,',
+        'message(text),',
+        'object,',
+        'parentComment',
+        ')'
+      ].join('')
+    });
+
+    const response = await fetch(`${this.baseUrl}/socialActions/${postUrn}/comments?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'X-Restli-Protocol-Version': '2.0.0'
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`LinkedIn API error: ${error.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch LinkedIn conversations (messages)
+   */
+  async fetchConversations(accessToken: string, count: number = 25, start: number = 0): Promise<{
+    elements: any[];
+    paging?: { start: number; count: number; total: number };
+  }> {
+    const params = new URLSearchParams({
+      start: start.toString(),
+      count: count.toString(),
+      projection: [
+        'elements*(',
+        'id,',
+        'participants,',
+        'lastActivityAt,',
+        'totalEventCount,',
+        'unreadCount,',
+        'muted,',
+        'archived',
+        ')'
+      ].join('')
+    });
+
+    const response = await fetch(`${this.baseUrl}/messaging/conversations?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'X-Restli-Protocol-Version': '2.0.0'
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`LinkedIn API error: ${error.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch messages in a LinkedIn conversation
+   */
+  async fetchConversationMessages(accessToken: string, conversationId: string, count: number = 25, start: number = 0): Promise<{
+    elements: any[];
+    paging?: { start: number; count: number; total: number };
+  }> {
+    const params = new URLSearchParams({
+      start: start.toString(),
+      count: count.toString(),
+      projection: [
+        'elements*(',
+        'id,',
+        'from,',
+        'created,',
+        'body,',
+        'subject,',
+        'messageType,',
+        'attributedBody,',
+        'attachments',
+        ')'
+      ].join('')
+    });
+
+    const response = await fetch(`${this.baseUrl}/messaging/conversations/${conversationId}/events?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'X-Restli-Protocol-Version': '2.0.0'
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`LinkedIn API error: ${error.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
    * Check if service is configured
    */
   isConfigured(): boolean {

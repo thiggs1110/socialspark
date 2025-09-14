@@ -221,6 +221,135 @@ export class TwitterApiService {
   }
 
   /**
+   * Fetch user's tweets
+   */
+  async fetchUserTweets(accessToken: string, userId: string, maxResults: number = 25, paginationToken?: string): Promise<{
+    data: any[];
+    meta?: { next_token?: string; result_count: number };
+  }> {
+    const params = new URLSearchParams({
+      'tweet.fields': [
+        'id',
+        'text',
+        'created_at',
+        'public_metrics',
+        'possibly_sensitive',
+        'reply_settings',
+        'source',
+        'context_annotations',
+        'entities',
+        'in_reply_to_user_id',
+        'referenced_tweets',
+        'attachments'
+      ].join(','),
+      'user.fields': 'id,username,name,profile_image_url',
+      'media.fields': 'url,type,width,height,preview_image_url',
+      'expansions': 'author_id,attachments.media_keys,referenced_tweets.id',
+      'max_results': maxResults.toString()
+    });
+
+    if (paginationToken) {
+      params.append('pagination_token', paginationToken);
+    }
+
+    const response = await fetch(`${this.baseUrl}/users/${userId}/tweets?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Twitter API error: ${error.detail || error.title || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch mentions of the authenticated user
+   */
+  async fetchMentions(accessToken: string, userId: string, maxResults: number = 25, paginationToken?: string): Promise<{
+    data: any[];
+    meta?: { next_token?: string; result_count: number };
+  }> {
+    const params = new URLSearchParams({
+      'tweet.fields': [
+        'id',
+        'text',
+        'created_at',
+        'public_metrics',
+        'author_id',
+        'in_reply_to_user_id',
+        'referenced_tweets',
+        'context_annotations'
+      ].join(','),
+      'user.fields': 'id,username,name,profile_image_url',
+      'expansions': 'author_id,referenced_tweets.id',
+      'max_results': maxResults.toString()
+    });
+
+    if (paginationToken) {
+      params.append('pagination_token', paginationToken);
+    }
+
+    const response = await fetch(`${this.baseUrl}/users/${userId}/mentions?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Twitter API error: ${error.detail || error.title || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch direct messages (requires special approval from Twitter)
+   */
+  async fetchDirectMessages(accessToken: string, maxResults: number = 25, paginationToken?: string): Promise<{
+    data: any[];
+    meta?: { next_token?: string; result_count: number };
+  }> {
+    const params = new URLSearchParams({
+      'dm_event.fields': [
+        'id',
+        'text',
+        'created_at',
+        'sender_id',
+        'participant_ids',
+        'referenced_tweet',
+        'media_keys',
+        'attachments'
+      ].join(','),
+      'user.fields': 'id,username,name,profile_image_url',
+      'media.fields': 'url,type,width,height',
+      'expansions': 'sender_id,participant_ids,referenced_tweet.id,attachments.media_keys',
+      'max_results': maxResults.toString()
+    });
+
+    if (paginationToken) {
+      params.append('pagination_token', paginationToken);
+    }
+
+    const response = await fetch(`${this.baseUrl}/dm_events?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Twitter API error: ${error.detail || error.title || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
    * Check if service is configured
    */
   isConfigured(): boolean {

@@ -321,6 +321,237 @@ export class FacebookApiService {
   }
 
   /**
+   * Fetch posts from a Facebook page
+   */
+  async fetchPagePosts(pageAccessToken: string, pageId: string, limit: number = 25, after?: string): Promise<{
+    data: any[];
+    paging?: { next?: string; cursors?: { after: string } };
+  }> {
+    const params = new URLSearchParams({
+      fields: [
+        'id',
+        'message',
+        'story', 
+        'full_picture',
+        'created_time',
+        'updated_time',
+        'type',
+        'status_type',
+        'permalink_url',
+        'shares.summary(total_count)',
+        'likes.summary(total_count)',
+        'comments.summary(total_count)',
+        'reactions.summary(total_count)'
+      ].join(','),
+      limit: limit.toString()
+    });
+
+    if (after) {
+      params.append('after', after);
+    }
+
+    const response = await fetch(`${this.baseUrl}/${pageId}/posts?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Facebook API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch comments for a specific post
+   */
+  async fetchPostComments(pageAccessToken: string, postId: string, limit: number = 25, after?: string): Promise<{
+    data: any[];
+    paging?: { next?: string; cursors?: { after: string } };
+  }> {
+    const params = new URLSearchParams({
+      fields: [
+        'id',
+        'message',
+        'created_time',
+        'from{id,name,picture}',
+        'like_count',
+        'comment_count',
+        'parent{id}'
+      ].join(','),
+      limit: limit.toString()
+    });
+
+    if (after) {
+      params.append('after', after);
+    }
+
+    const response = await fetch(`${this.baseUrl}/${postId}/comments?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Facebook API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch Instagram posts for a connected Instagram Business Account
+   */
+  async fetchInstagramPosts(pageAccessToken: string, instagramAccountId: string, limit: number = 25, after?: string): Promise<{
+    data: any[];
+    paging?: { next?: string; cursors?: { after: string } };
+  }> {
+    const params = new URLSearchParams({
+      fields: [
+        'id',
+        'caption',
+        'media_type',
+        'media_url',
+        'permalink',
+        'timestamp',
+        'like_count',
+        'comments_count'
+      ].join(','),
+      limit: limit.toString()
+    });
+
+    if (after) {
+      params.append('after', after);
+    }
+
+    const response = await fetch(`${this.baseUrl}/${instagramAccountId}/media?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Instagram API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch Instagram comments for a specific post
+   */
+  async fetchInstagramComments(pageAccessToken: string, mediaId: string, limit: number = 25, after?: string): Promise<{
+    data: any[];
+    paging?: { next?: string; cursors?: { after: string } };
+  }> {
+    const params = new URLSearchParams({
+      fields: [
+        'id',
+        'text',
+        'timestamp',
+        'username',
+        'from{id,username}'
+      ].join(','),
+      limit: limit.toString()
+    });
+
+    if (after) {
+      params.append('after', after);
+    }
+
+    const response = await fetch(`${this.baseUrl}/${mediaId}/comments?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Instagram API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch page conversations (messages)
+   */
+  async fetchPageConversations(pageAccessToken: string, pageId: string, limit: number = 25, after?: string): Promise<{
+    data: any[];
+    paging?: { next?: string; cursors?: { after: string } };
+  }> {
+    const params = new URLSearchParams({
+      fields: [
+        'id',
+        'snippet',
+        'updated_time',
+        'message_count',
+        'unread_count',
+        'participants'
+      ].join(','),
+      limit: limit.toString()
+    });
+
+    if (after) {
+      params.append('after', after);
+    }
+
+    const response = await fetch(`${this.baseUrl}/${pageId}/conversations?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Facebook API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Fetch messages in a conversation
+   */
+  async fetchConversationMessages(pageAccessToken: string, conversationId: string, limit: number = 25, after?: string): Promise<{
+    data: any[];
+    paging?: { next?: string; cursors?: { after: string } };
+  }> {
+    const params = new URLSearchParams({
+      fields: [
+        'id',
+        'message',
+        'created_time',
+        'from{id,name,email}',
+        'to{data{id,name}}',
+        'attachments'
+      ].join(','),
+      limit: limit.toString()
+    });
+
+    if (after) {
+      params.append('after', after);
+    }
+
+    const response = await fetch(`${this.baseUrl}/${conversationId}/messages?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${pageAccessToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Facebook API error: ${error.error?.message || 'Unknown error'}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
    * Verify webhook signature
    */
   verifyWebhookSignature(payload: string, signature: string): boolean {
