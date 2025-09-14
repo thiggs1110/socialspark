@@ -296,3 +296,254 @@ export type Interaction = typeof interactions.$inferSelect;
 export type InsertInteraction = z.infer<typeof insertInteractionSchema>;
 export type SchedulingSettings = typeof schedulingSettings.$inferSelect;
 export type InsertSchedulingSettings = z.infer<typeof insertSchedulingSettingsSchema>;
+
+// Subscription plans
+export const subscriptionPlans = pgTable("subscription_plans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(), // "monthly", "annual", "monthly_discount", "annual_discount"
+  displayName: varchar("display_name").notNull(), // "Monthly Plan", "Annual Plan"
+  price: integer("price").notNull(), // in cents (29900 for $299)
+  interval: varchar("interval").notNull(), // "month" | "year"
+  trialDays: integer("trial_days").default(7),
+  isActive: boolean("is_active").default(true),
+  stripeProductId: varchar("stripe_product_id"),
+  stripePriceId: varchar("stripe_price_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// User subscriptions
+export const userSubscriptions = pgTable("user_subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  planId: varchar("plan_id").notNull().references(() => subscriptionPlans.id),
+  stripeSubscriptionId: varchar("stripe_subscription_id"),
+  stripeCustomerId: varchar("stripe_customer_id"),
+  status: varchar("status").notNull(), // "trialing" | "active" | "past_due" | "canceled" | "unpaid"
+  trialEndsAt: timestamp("trial_ends_at"),
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false),
+  affiliateId: varchar("affiliate_id"), // Track referrals - will add FK after tables defined
+  discountLinkId: varchar("discount_link_id"), // Track discount usage - will add FK after tables defined
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Admin users
+export const adminUsers = pgTable("admin_users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: varchar("role").notNull(), // "super_admin" | "admin" | "analyst"
+  permissions: varchar("permissions").array(), // ["view_users", "manage_billing", etc.]
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Payment history
+export const paymentHistory = pgTable("payment_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  subscriptionId: varchar("subscription_id").references(() => userSubscriptions.id),
+  stripePaymentIntentId: varchar("stripe_payment_intent_id"),
+  amount: integer("amount").notNull(), // in cents
+  currency: varchar("currency").default("usd"),
+  status: varchar("status").notNull(), // "succeeded" | "failed" | "pending"
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Affiliates
+export const affiliates = pgTable("affiliates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  affiliateCode: varchar("affiliate_code").notNull().unique(), // unique referral code
+  commissionRate: integer("commission_rate").default(30), // percentage as integer (30 = 30%)
+  totalReferrals: integer("total_referrals").default(0),
+  totalCommissions: integer("total_commissions").default(0), // in cents
+  unpaidCommissions: integer("unpaid_commissions").default(0), // in cents
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Referrals tracking
+export const referrals = pgTable("referrals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  affiliateId: varchar("affiliate_id").notNull().references(() => affiliates.id, { onDelete: "cascade" }),
+  referredUserId: varchar("referred_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  subscriptionId: varchar("subscription_id").references(() => userSubscriptions.id),
+  status: varchar("status").notNull(), // "pending" | "converted" | "commission_paid"
+  conversionDate: timestamp("conversion_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Commission payments
+export const commissions = pgTable("commissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  affiliateId: varchar("affiliate_id").notNull().references(() => affiliates.id, { onDelete: "cascade" }),
+  referralId: varchar("referral_id").notNull().references(() => referrals.id),
+  amount: integer("amount").notNull(), // in cents
+  paymentMethod: varchar("payment_method"), // "stripe" | "paypal" | "manual"
+  paymentReference: varchar("payment_reference"), // external payment ID
+  status: varchar("status").notNull(), // "pending" | "paid" | "failed"
+  paidAt: timestamp("paid_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Custom discount links
+export const discountLinks = pgTable("discount_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  linkCode: varchar("link_code").notNull().unique(), // unique code for the URL
+  name: varchar("name").notNull(), // admin-friendly name
+  description: text("description"),
+  monthlyPrice: integer("monthly_price"), // custom monthly price in cents (19900 for $199)
+  annualPrice: integer("annual_price"), // custom annual price in cents (199900 for $1999)
+  usageLimit: integer("usage_limit"), // null = unlimited
+  usageCount: integer("usage_count").default(0),
+  expiresAt: timestamp("expires_at"), // null = never expires
+  isActive: boolean("is_active").default(true),
+  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Relations for new tables
+export const subscriptionPlanRelations = relations(subscriptionPlans, ({ many }) => ({
+  subscriptions: many(userSubscriptions),
+}));
+
+export const userSubscriptionRelations = relations(userSubscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [userSubscriptions.userId],
+    references: [users.id],
+  }),
+  plan: one(subscriptionPlans, {
+    fields: [userSubscriptions.planId],
+    references: [subscriptionPlans.id],
+  }),
+  affiliate: one(affiliates, {
+    fields: [userSubscriptions.affiliateId],
+    references: [affiliates.id],
+  }),
+  discountLink: one(discountLinks, {
+    fields: [userSubscriptions.discountLinkId],
+    references: [discountLinks.id],
+  }),
+}));
+
+export const adminUserRelations = relations(adminUsers, ({ one }) => ({
+  user: one(users, {
+    fields: [adminUsers.userId],
+    references: [users.id],
+  }),
+}));
+
+export const affiliateRelations = relations(affiliates, ({ one, many }) => ({
+  user: one(users, {
+    fields: [affiliates.userId],
+    references: [users.id],
+  }),
+  referrals: many(referrals),
+  commissions: many(commissions),
+  subscriptions: many(userSubscriptions),
+}));
+
+export const referralRelations = relations(referrals, ({ one }) => ({
+  affiliate: one(affiliates, {
+    fields: [referrals.affiliateId],
+    references: [affiliates.id],
+  }),
+  referredUser: one(users, {
+    fields: [referrals.referredUserId],
+    references: [users.id],
+  }),
+  subscription: one(userSubscriptions, {
+    fields: [referrals.subscriptionId],
+    references: [userSubscriptions.id],
+  }),
+}));
+
+export const commissionRelations = relations(commissions, ({ one }) => ({
+  affiliate: one(affiliates, {
+    fields: [commissions.affiliateId],
+    references: [affiliates.id],
+  }),
+  referral: one(referrals, {
+    fields: [commissions.referralId],
+    references: [referrals.id],
+  }),
+}));
+
+export const discountLinkRelations = relations(discountLinks, ({ one, many }) => ({
+  createdBy: one(users, {
+    fields: [discountLinks.createdBy],
+    references: [users.id],
+  }),
+  subscriptions: many(userSubscriptions),
+}));
+
+// Insert schemas for new tables
+export const insertSubscriptionPlanSchema = createInsertSchema(subscriptionPlans).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertUserSubscriptionSchema = createInsertSchema(userSubscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPaymentHistorySchema = createInsertSchema(paymentHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertAffiliateSchema = createInsertSchema(affiliates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertReferralSchema = createInsertSchema(referrals).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertCommissionSchema = createInsertSchema(commissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertDiscountLinkSchema = createInsertSchema(discountLinks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Types for new tables
+export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
+export type InsertSubscriptionPlan = z.infer<typeof insertSubscriptionPlanSchema>;
+export type UserSubscription = typeof userSubscriptions.$inferSelect;
+export type InsertUserSubscription = z.infer<typeof insertUserSubscriptionSchema>;
+export type AdminUser = typeof adminUsers.$inferSelect;
+export type InsertAdminUser = z.infer<typeof insertAdminUserSchema>;
+export type PaymentHistory = typeof paymentHistory.$inferSelect;
+export type InsertPaymentHistory = z.infer<typeof insertPaymentHistorySchema>;
+export type Affiliate = typeof affiliates.$inferSelect;
+export type InsertAffiliate = z.infer<typeof insertAffiliateSchema>;
+export type Referral = typeof referrals.$inferSelect;
+export type InsertReferral = z.infer<typeof insertReferralSchema>;
+export type Commission = typeof commissions.$inferSelect;
+export type InsertCommission = z.infer<typeof insertCommissionSchema>;
+export type DiscountLink = typeof discountLinks.$inferSelect;
+export type InsertDiscountLink = z.infer<typeof insertDiscountLinkSchema>;

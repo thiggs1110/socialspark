@@ -7,6 +7,14 @@ import {
   contentAnalytics,
   interactions,
   schedulingSettings,
+  subscriptionPlans,
+  userSubscriptions,
+  adminUsers,
+  paymentHistory,
+  affiliates,
+  referrals,
+  commissions,
+  discountLinks,
   type User,
   type UpsertUser,
   type Business,
@@ -23,6 +31,22 @@ import {
   type InsertInteraction,
   type SchedulingSettings,
   type InsertSchedulingSettings,
+  type SubscriptionPlan,
+  type InsertSubscriptionPlan,
+  type UserSubscription,
+  type InsertUserSubscription,
+  type AdminUser,
+  type InsertAdminUser,
+  type PaymentHistory,
+  type InsertPaymentHistory,
+  type Affiliate,
+  type InsertAffiliate,
+  type Referral,
+  type InsertReferral,
+  type Commission,
+  type InsertCommission,
+  type DiscountLink,
+  type InsertDiscountLink,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, or, count, sql } from "drizzle-orm";
@@ -82,6 +106,66 @@ export interface IStorage {
     activePlatforms: number;
     pendingApprovals: number;
   }>;
+
+  // Subscription operations
+  createSubscriptionPlan(plan: InsertSubscriptionPlan): Promise<SubscriptionPlan>;
+  getSubscriptionPlans(): Promise<SubscriptionPlan[]>;
+  getActiveSubscriptionPlans(): Promise<SubscriptionPlan[]>;
+  updateSubscriptionPlan(id: string, plan: Partial<InsertSubscriptionPlan>): Promise<SubscriptionPlan | undefined>;
+
+  // User subscription operations
+  createUserSubscription(subscription: InsertUserSubscription): Promise<UserSubscription>;
+  getUserSubscription(userId: string): Promise<UserSubscription | undefined>;
+  getUserSubscriptionById(id: string): Promise<UserSubscription | undefined>;
+  updateUserSubscription(id: string, subscription: Partial<InsertUserSubscription>): Promise<UserSubscription | undefined>;
+  getAllActiveSubscriptions(): Promise<UserSubscription[]>;
+  getTrialExpiringSubscriptions(daysAhead: number): Promise<UserSubscription[]>;
+
+  // Admin operations
+  createAdminUser(admin: InsertAdminUser): Promise<AdminUser>;
+  getAdminUser(userId: string): Promise<AdminUser | undefined>;
+  getAllUsers(limit?: number, offset?: number): Promise<User[]>;
+  getUserStats(): Promise<{
+    totalUsers: number;
+    activeTrials: number;
+    paidSubscriptions: number;
+    churnedUsers: number;
+  }>;
+
+  // Payment history operations
+  createPaymentHistory(payment: InsertPaymentHistory): Promise<PaymentHistory>;
+  getPaymentHistoryByUser(userId: string): Promise<PaymentHistory[]>;
+  getRevenueStats(startDate: Date, endDate: Date): Promise<{
+    totalRevenue: number;
+    monthlyRecurring: number;
+    annualRecurring: number;
+    averagePerUser: number;
+  }>;
+
+  // Affiliate operations
+  createAffiliate(affiliate: InsertAffiliate): Promise<Affiliate>;
+  getAffiliateByUserId(userId: string): Promise<Affiliate | undefined>;
+  getAffiliateByCode(code: string): Promise<Affiliate | undefined>;
+  updateAffiliate(id: string, affiliate: Partial<InsertAffiliate>): Promise<Affiliate | undefined>;
+  getAllAffiliates(): Promise<Affiliate[]>;
+
+  // Referral operations
+  createReferral(referral: InsertReferral): Promise<Referral>;
+  getReferralsByAffiliate(affiliateId: string): Promise<Referral[]>;
+  updateReferralStatus(id: string, status: string, conversionDate?: Date): Promise<Referral | undefined>;
+
+  // Commission operations
+  createCommission(commission: InsertCommission): Promise<Commission>;
+  getCommissionsByAffiliate(affiliateId: string): Promise<Commission[]>;
+  updateCommissionStatus(id: string, status: string, paidAt?: Date): Promise<Commission | undefined>;
+  getUnpaidCommissions(): Promise<Commission[]>;
+
+  // Discount link operations
+  createDiscountLink(link: InsertDiscountLink): Promise<DiscountLink>;
+  getDiscountLinkByCode(code: string): Promise<DiscountLink | undefined>;
+  getAllDiscountLinks(): Promise<DiscountLink[]>;
+  updateDiscountLink(id: string, link: Partial<InsertDiscountLink>): Promise<DiscountLink | undefined>;
+  incrementDiscountLinkUsage(id: string): Promise<DiscountLink | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -436,6 +520,285 @@ export class DatabaseStorage implements IStorage {
       activePlatforms: activePlatformsResult.count,
       pendingApprovals: pendingApprovalsResult.count,
     };
+  }
+
+  // Subscription plan operations
+  async createSubscriptionPlan(plan: InsertSubscriptionPlan): Promise<SubscriptionPlan> {
+    const [newPlan] = await db.insert(subscriptionPlans).values(plan).returning();
+    return newPlan;
+  }
+
+  async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
+    return await db.select().from(subscriptionPlans).orderBy(subscriptionPlans.price);
+  }
+
+  async getActiveSubscriptionPlans(): Promise<SubscriptionPlan[]> {
+    return await db.select().from(subscriptionPlans)
+      .where(eq(subscriptionPlans.isActive, true))
+      .orderBy(subscriptionPlans.price);
+  }
+
+  async updateSubscriptionPlan(id: string, plan: Partial<InsertSubscriptionPlan>): Promise<SubscriptionPlan | undefined> {
+    const [updated] = await db.update(subscriptionPlans)
+      .set({ ...plan, updatedAt: new Date() })
+      .where(eq(subscriptionPlans.id, id))
+      .returning();
+    return updated;
+  }
+
+  // User subscription operations
+  async createUserSubscription(subscription: InsertUserSubscription): Promise<UserSubscription> {
+    const [newSubscription] = await db.insert(userSubscriptions).values(subscription).returning();
+    return newSubscription;
+  }
+
+  async getUserSubscription(userId: string): Promise<UserSubscription | undefined> {
+    const [subscription] = await db.select().from(userSubscriptions)
+      .where(eq(userSubscriptions.userId, userId))
+      .orderBy(desc(userSubscriptions.createdAt))
+      .limit(1);
+    return subscription;
+  }
+
+  async getUserSubscriptionById(id: string): Promise<UserSubscription | undefined> {
+    const [subscription] = await db.select().from(userSubscriptions)
+      .where(eq(userSubscriptions.id, id));
+    return subscription;
+  }
+
+  async updateUserSubscription(id: string, subscription: Partial<InsertUserSubscription>): Promise<UserSubscription | undefined> {
+    const [updated] = await db.update(userSubscriptions)
+      .set({ ...subscription, updatedAt: new Date() })
+      .where(eq(userSubscriptions.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getAllActiveSubscriptions(): Promise<UserSubscription[]> {
+    return await db.select().from(userSubscriptions)
+      .where(or(
+        eq(userSubscriptions.status, "active"),
+        eq(userSubscriptions.status, "trialing")
+      ));
+  }
+
+  async getTrialExpiringSubscriptions(daysAhead: number): Promise<UserSubscription[]> {
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + daysAhead);
+    
+    return await db.select().from(userSubscriptions)
+      .where(and(
+        eq(userSubscriptions.status, "trialing"),
+        sql`${userSubscriptions.trialEndsAt} <= ${futureDate}`
+      ));
+  }
+
+  // Admin operations
+  async createAdminUser(admin: InsertAdminUser): Promise<AdminUser> {
+    const [newAdmin] = await db.insert(adminUsers).values(admin).returning();
+    return newAdmin;
+  }
+
+  async getAdminUser(userId: string): Promise<AdminUser | undefined> {
+    const [admin] = await db.select().from(adminUsers)
+      .where(and(
+        eq(adminUsers.userId, userId),
+        eq(adminUsers.isActive, true)
+      ));
+    return admin;
+  }
+
+  async getAllUsers(limit: number = 100, offset: number = 0): Promise<User[]> {
+    return await db.select().from(users)
+      .orderBy(desc(users.createdAt))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async getUserStats(): Promise<{
+    totalUsers: number;
+    activeTrials: number;
+    paidSubscriptions: number;
+    churnedUsers: number;
+  }> {
+    const [totalResult] = await db.select({ count: count() }).from(users);
+    const [trialsResult] = await db.select({ count: count() }).from(userSubscriptions)
+      .where(eq(userSubscriptions.status, "trialing"));
+    const [paidResult] = await db.select({ count: count() }).from(userSubscriptions)
+      .where(eq(userSubscriptions.status, "active"));
+    const [churnedResult] = await db.select({ count: count() }).from(userSubscriptions)
+      .where(eq(userSubscriptions.status, "canceled"));
+
+    return {
+      totalUsers: totalResult.count,
+      activeTrials: trialsResult.count,
+      paidSubscriptions: paidResult.count,
+      churnedUsers: churnedResult.count,
+    };
+  }
+
+  // Payment history operations
+  async createPaymentHistory(payment: InsertPaymentHistory): Promise<PaymentHistory> {
+    const [newPayment] = await db.insert(paymentHistory).values(payment).returning();
+    return newPayment;
+  }
+
+  async getPaymentHistoryByUser(userId: string): Promise<PaymentHistory[]> {
+    return await db.select().from(paymentHistory)
+      .where(eq(paymentHistory.userId, userId))
+      .orderBy(desc(paymentHistory.createdAt));
+  }
+
+  async getRevenueStats(startDate: Date, endDate: Date): Promise<{
+    totalRevenue: number;
+    monthlyRecurring: number;
+    annualRecurring: number;
+    averagePerUser: number;
+  }> {
+    // Get successful payments in date range
+    const payments = await db.select().from(paymentHistory)
+      .where(and(
+        eq(paymentHistory.status, "succeeded"),
+        sql`${paymentHistory.createdAt} >= ${startDate}`,
+        sql`${paymentHistory.createdAt} <= ${endDate}`
+      ));
+
+    const totalRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
+    
+    // Get active subscriptions for MRR/ARR calculation
+    const activeSubscriptions = await this.getAllActiveSubscriptions();
+    const monthlyRecurring = activeSubscriptions
+      .filter(s => s.planId.includes("monthly"))
+      .length * 29900; // $299 in cents
+    const annualRecurring = activeSubscriptions
+      .filter(s => s.planId.includes("annual"))
+      .length * 249900; // $2499 in cents
+
+    const totalActiveUsers = activeSubscriptions.length;
+    const averagePerUser = totalActiveUsers > 0 ? totalRevenue / totalActiveUsers : 0;
+
+    return {
+      totalRevenue,
+      monthlyRecurring,
+      annualRecurring,
+      averagePerUser,
+    };
+  }
+
+  // Affiliate operations
+  async createAffiliate(affiliate: InsertAffiliate): Promise<Affiliate> {
+    const [newAffiliate] = await db.insert(affiliates).values(affiliate).returning();
+    return newAffiliate;
+  }
+
+  async getAffiliateByUserId(userId: string): Promise<Affiliate | undefined> {
+    const [affiliate] = await db.select().from(affiliates)
+      .where(eq(affiliates.userId, userId));
+    return affiliate;
+  }
+
+  async getAffiliateByCode(code: string): Promise<Affiliate | undefined> {
+    const [affiliate] = await db.select().from(affiliates)
+      .where(eq(affiliates.affiliateCode, code));
+    return affiliate;
+  }
+
+  async updateAffiliate(id: string, affiliate: Partial<InsertAffiliate>): Promise<Affiliate | undefined> {
+    const [updated] = await db.update(affiliates)
+      .set({ ...affiliate, updatedAt: new Date() })
+      .where(eq(affiliates.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getAllAffiliates(): Promise<Affiliate[]> {
+    return await db.select().from(affiliates)
+      .orderBy(desc(affiliates.totalCommissions));
+  }
+
+  // Referral operations
+  async createReferral(referral: InsertReferral): Promise<Referral> {
+    const [newReferral] = await db.insert(referrals).values(referral).returning();
+    return newReferral;
+  }
+
+  async getReferralsByAffiliate(affiliateId: string): Promise<Referral[]> {
+    return await db.select().from(referrals)
+      .where(eq(referrals.affiliateId, affiliateId))
+      .orderBy(desc(referrals.createdAt));
+  }
+
+  async updateReferralStatus(id: string, status: string, conversionDate?: Date): Promise<Referral | undefined> {
+    const [updated] = await db.update(referrals)
+      .set({ status, conversionDate })
+      .where(eq(referrals.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Commission operations
+  async createCommission(commission: InsertCommission): Promise<Commission> {
+    const [newCommission] = await db.insert(commissions).values(commission).returning();
+    return newCommission;
+  }
+
+  async getCommissionsByAffiliate(affiliateId: string): Promise<Commission[]> {
+    return await db.select().from(commissions)
+      .where(eq(commissions.affiliateId, affiliateId))
+      .orderBy(desc(commissions.createdAt));
+  }
+
+  async updateCommissionStatus(id: string, status: string, paidAt?: Date): Promise<Commission | undefined> {
+    const [updated] = await db.update(commissions)
+      .set({ status, paidAt })
+      .where(eq(commissions.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getUnpaidCommissions(): Promise<Commission[]> {
+    return await db.select().from(commissions)
+      .where(eq(commissions.status, "pending"))
+      .orderBy(desc(commissions.createdAt));
+  }
+
+  // Discount link operations
+  async createDiscountLink(link: InsertDiscountLink): Promise<DiscountLink> {
+    const [newLink] = await db.insert(discountLinks).values(link).returning();
+    return newLink;
+  }
+
+  async getDiscountLinkByCode(code: string): Promise<DiscountLink | undefined> {
+    const [link] = await db.select().from(discountLinks)
+      .where(and(
+        eq(discountLinks.linkCode, code),
+        eq(discountLinks.isActive, true)
+      ));
+    return link;
+  }
+
+  async getAllDiscountLinks(): Promise<DiscountLink[]> {
+    return await db.select().from(discountLinks)
+      .orderBy(desc(discountLinks.createdAt));
+  }
+
+  async updateDiscountLink(id: string, link: Partial<InsertDiscountLink>): Promise<DiscountLink | undefined> {
+    const [updated] = await db.update(discountLinks)
+      .set({ ...link, updatedAt: new Date() })
+      .where(eq(discountLinks.id, id))
+      .returning();
+    return updated;
+  }
+
+  async incrementDiscountLinkUsage(id: string): Promise<DiscountLink | undefined> {
+    const [updated] = await db.update(discountLinks)
+      .set({ 
+        usageCount: sql`${discountLinks.usageCount} + 1`,
+        updatedAt: new Date() 
+      })
+      .where(eq(discountLinks.id, id))
+      .returning();
+    return updated;
   }
 }
 
