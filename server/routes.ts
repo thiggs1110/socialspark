@@ -356,6 +356,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch('/api/content/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { title, content: contentText, hashtags } = req.body;
+      const userId = req.user.id;
+      
+      // Verify ownership - ensure content belongs to user's business
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      const updates: any = {};
+      if (title !== undefined) updates.title = title;
+      if (contentText !== undefined) updates.content = contentText;
+      if (hashtags !== undefined) updates.hashtags = hashtags;
+
+      const updatedContent = await storage.updateContent(id, updates);
+      res.json(updatedContent);
+    } catch (error) {
+      console.error("Error updating content:", error);
+      res.status(500).json({ message: "Failed to update content" });
+    }
+  });
+
+  app.delete('/api/content/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      
+      // Verify ownership - ensure content belongs to user's business
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      await storage.deleteContent(id);
+      res.json({ message: "Content deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting content:", error);
+      res.status(500).json({ message: "Failed to delete content" });
+    }
+  });
+
   app.patch('/api/content/:id/publish', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;

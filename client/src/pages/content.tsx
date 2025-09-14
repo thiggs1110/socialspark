@@ -151,6 +151,33 @@ export default function Content() {
     },
   });
 
+  // Update content mutation
+  const updateContentMutation = useMutation({
+    mutationFn: ({ id, updates }: { id: string; updates: { title?: string; content?: string; hashtags?: string[] } }) =>
+      apiRequest('PATCH', `/api/content/${id}`, updates),
+    onSuccess: () => {
+      toast({ title: "Content updated successfully" });
+      queryClient.invalidateQueries({ queryKey: ['/api/content'] });
+      setEditDialogOpen(false);
+    },
+    onError: () => {
+      toast({ title: "Failed to update content", variant: "destructive" });
+    },
+  });
+
+  // Delete content mutation
+  const deleteContentMutation = useMutation({
+    mutationFn: (contentId: string) => apiRequest('DELETE', `/api/content/${contentId}`),
+    onSuccess: () => {
+      toast({ title: "Content deleted successfully" });
+      queryClient.invalidateQueries({ queryKey: ['/api/content'] });
+      setDeleteDialogOpen(false);
+    },
+    onError: () => {
+      toast({ title: "Failed to delete content", variant: "destructive" });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -257,6 +284,8 @@ export default function Content() {
             content={selectedContent}
             open={editDialogOpen}
             onOpenChange={setEditDialogOpen}
+            onSave={(id, updates) => updateContentMutation.mutate({ id, updates })}
+            isSaving={updateContentMutation.isPending}
           />
 
           {/* Delete Dialog */}
@@ -273,8 +302,10 @@ export default function Content() {
                 <AlertDialogAction 
                   className="bg-red-500 hover:bg-red-600"
                   data-testid="button-confirm-delete"
+                  onClick={() => selectedContent && deleteContentMutation.mutate(selectedContent.id)}
+                  disabled={deleteContentMutation.isPending}
                 >
-                  Delete
+                  {deleteContentMutation.isPending ? "Deleting..." : "Delete"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -418,11 +449,15 @@ function ContentCard({
 function EditContentDialog({ 
   content, 
   open, 
-  onOpenChange 
+  onOpenChange,
+  onSave,
+  isSaving 
 }: { 
   content: Content | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSave: (id: string, updates: { title?: string; content?: string; hashtags?: string[] }) => void;
+  isSaving: boolean;
 }) {
   const [editedContent, setEditedContent] = useState("");
   const [editedTitle, setEditedTitle] = useState("");
@@ -433,6 +468,16 @@ function EditContentDialog({
       setEditedTitle(content.title || "");
     }
   }, [content]);
+
+  const handleSave = () => {
+    if (!content) return;
+    
+    const updates: { title?: string; content?: string; hashtags?: string[] } = {};
+    if (editedTitle !== content.title) updates.title = editedTitle;
+    if (editedContent !== content.content) updates.content = editedContent;
+    
+    onSave(content.id, updates);
+  };
 
   if (!content) return null;
 
@@ -452,6 +497,7 @@ function EditContentDialog({
               onChange={(e) => setEditedTitle(e.target.value)}
               placeholder="Content title..."
               data-testid="input-edit-title"
+              disabled={isSaving}
             />
           </div>
           
@@ -464,6 +510,7 @@ function EditContentDialog({
               placeholder="Content text..."
               rows={8}
               data-testid="textarea-edit-content"
+              disabled={isSaving}
             />
           </div>
           
@@ -472,11 +519,16 @@ function EditContentDialog({
               variant="outline" 
               onClick={() => onOpenChange(false)}
               data-testid="button-cancel-edit"
+              disabled={isSaving}
             >
               Cancel
             </Button>
-            <Button data-testid="button-save-edit">
-              Save Changes
+            <Button 
+              onClick={handleSave}
+              data-testid="button-save-edit"
+              disabled={isSaving}
+            >
+              {isSaving ? "Saving..." : "Save Changes"}
             </Button>
           </div>
         </div>

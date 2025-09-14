@@ -57,6 +57,8 @@ export interface IStorage {
   getAllDueContent(): Promise<Content[]>;
   updateContentStatus(id: string, status: string, publishedAt?: Date): Promise<Content | undefined>;
   getContentById(id: string): Promise<Content | undefined>;
+  updateContent(id: string, updates: Partial<InsertContent>): Promise<Content | undefined>;
+  deleteContent(id: string): Promise<void>;
 
   // Analytics operations
   upsertContentAnalytics(analytics: InsertContentAnalytics): Promise<ContentAnalytics>;
@@ -241,6 +243,19 @@ export class DatabaseStorage implements IStorage {
   async getContentById(id: string): Promise<Content | undefined> {
     const [contentItem] = await db.select().from(content).where(eq(content.id, id));
     return contentItem;
+  }
+
+  async updateContent(id: string, updates: Partial<InsertContent>): Promise<Content | undefined> {
+    const [updatedContent] = await db
+      .update(content)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(content.id, id))
+      .returning();
+    return updatedContent;
+  }
+
+  async deleteContent(id: string): Promise<void> {
+    await db.delete(content).where(eq(content.id, id));
   }
 
   async getScheduledContent(businessId: string, startDate?: Date, endDate?: Date): Promise<Content[]> {
