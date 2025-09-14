@@ -9,7 +9,8 @@ import {
   Settings,
   Share2,
   Zap,
-  User as UserIcon
+  User as UserIcon,
+  CreditCard
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import type { User } from "@shared/schema";
@@ -21,6 +22,7 @@ const navigation = [
   { name: 'Platforms', href: '/platforms', icon: Share2 },
   { name: 'Inbox', href: '/inbox', icon: MessageSquare, badge: 3 },
   { name: 'Analytics', href: '/analytics', icon: BarChart },
+  { name: 'Subscription', href: '/subscription', icon: CreditCard },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
