@@ -3,11 +3,33 @@ import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { generateBatchContent, saveBatchContentAsDrafts, scheduleContent, publishContent } from "./services/contentGenerator";
+import { generateBatchContent, saveBatchContentAsDrafts, scheduleContent } from "./services/contentGenerator";
+import { EnhancedPublisher, publishContent } from "./services/enhancedPublisher";
 import { generateReplyToInteraction, analyzeWebsiteForBrandVoice } from "./services/openai";
 import { SocialMediaManager } from "./services/socialMediaApi";
 import { insertBusinessSchema, insertBrandVoiceSchema, insertPlatformConnectionSchema, insertSchedulingSettingsSchema } from "@shared/schema";
 import { z } from "zod";
+
+// Enhanced publishing validation schemas
+const platformPublishSchema = z.object({
+  validateBeforePublish: z.boolean().default(true),
+  autoFixContent: z.boolean().default(true),
+  dryRun: z.boolean().default(false)
+});
+
+const multiPlatformPublishSchema = z.object({
+  platforms: z.array(z.enum(['facebook', 'instagram', 'linkedin', 'twitter', 'pinterest'])).min(1),
+  validateBeforePublish: z.boolean().default(true),
+  autoFixContent: z.boolean().default(true),
+  dryRun: z.boolean().default(false)
+});
+
+const scheduleEnhancedSchema = z.object({
+  scheduledFor: z.string().datetime(),
+  platforms: z.array(z.enum(['facebook', 'instagram', 'linkedin', 'twitter', 'pinterest'])).min(1)
+});
+
+const platformEnum = z.enum(['facebook', 'instagram', 'linkedin', 'twitter', 'pinterest']);
 
 // Crypto utility functions for secure OAuth
 function generateSecureNonce(length: number = 32): string {
@@ -759,6 +781,212 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error publishing content:", error);
       res.status(500).json({ message: "Failed to publish content" });
+    }
+  });
+
+  // Enhanced Publishing Routes
+  
+  // Platform-specific content publishing
+  app.post('/api/content/:id/publish/:platform', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id, platform } = req.params;
+      
+      // Validate platform parameter
+      const validatedPlatform = platformEnum.parse(platform);
+      const validatedBody = platformPublishSchema.parse(req.body);
+      const { validateBeforePublish, autoFixContent, dryRun } = validatedBody;
+      const userId = req.user.id;
+      
+      // Verify ownership
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      const publisher = new EnhancedPublisher(business.id);
+      const result = await publisher.publishToPlatform(id, validatedPlatform, {
+        validateBeforePublish,
+        autoFixContent,
+        dryRun
+      });
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error publishing to platform:", error);
+      res.status(500).json({ message: "Failed to publish to platform", error: (error as Error).message });
+    }
+  });
+
+  // Multi-platform content publishing
+  app.post('/api/content/:id/publish-multi', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const validatedBody = multiPlatformPublishSchema.parse(req.body);
+      const { platforms, validateBeforePublish, autoFixContent, dryRun } = validatedBody;
+      const userId = req.user.id;
+      
+      // Verify ownership
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      const publisher = new EnhancedPublisher(business.id);
+      const result = await publisher.publishToMultiplePlatforms(id, platforms, {
+        validateBeforePublish,
+        autoFixContent,
+        dryRun
+      });
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error publishing to multiple platforms:", error);
+      res.status(500).json({ message: "Failed to publish to platforms", error: (error as Error).message });
+    }
+  });
+
+  // Content validation for publishing
+  app.get('/api/content/:id/validate', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { platforms } = req.query;
+      const userId = req.user.id;
+      
+      // Verify ownership
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      const publisher = new EnhancedPublisher(business.id);
+      const platformsToValidate = platforms 
+        ? (platforms as string).split(',') 
+        : ['facebook', 'instagram', 'linkedin', 'twitter', 'pinterest'];
+      
+      const validation = await publisher.validateContentForPublishing(id, platformsToValidate as any);
+      
+      res.json(validation);
+    } catch (error) {
+      console.error("Error validating content:", error);
+      res.status(500).json({ message: "Failed to validate content", error: (error as Error).message });
+    }
+  });
+
+  // Content preview for all platforms
+  app.get('/api/content/:id/preview', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      
+      // Verify ownership
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      const publisher = new EnhancedPublisher(business.id);
+      const previews = await publisher.previewContentForAllPlatforms(id);
+      
+      res.json(previews);
+    } catch (error) {
+      console.error("Error generating content preview:", error);
+      res.status(500).json({ message: "Failed to generate preview", error: (error as Error).message });
+    }
+  });
+
+  // Publishing requirements for connected platforms
+  app.get('/api/publishing/requirements', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const publisher = new EnhancedPublisher(business.id);
+      const requirements = await publisher.getPublishingRequirements();
+      
+      res.json(requirements);
+    } catch (error) {
+      console.error("Error getting publishing requirements:", error);
+      res.status(500).json({ message: "Failed to get requirements", error: (error as Error).message });
+    }
+  });
+
+  // Content optimization suggestions
+  app.get('/api/content/:id/optimize', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      
+      // Verify ownership
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      const publisher = new EnhancedPublisher(business.id);
+      const suggestions = await publisher.getContentOptimizationSuggestions(id);
+      
+      res.json(suggestions);
+    } catch (error) {
+      console.error("Error getting optimization suggestions:", error);
+      res.status(500).json({ message: "Failed to get suggestions", error: (error as Error).message });
+    }
+  });
+
+  // Enhanced content scheduling with validation
+  app.post('/api/content/:id/schedule-enhanced', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const validatedBody = scheduleEnhancedSchema.parse(req.body);
+      const { scheduledFor, platforms } = validatedBody;
+      const userId = req.user.id;
+      
+      // Verify ownership
+      const business = await storage.getBusinessByUserId(userId);
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+      
+      const content = await storage.getContentById(id);
+      if (!content || content.businessId !== business.id) {
+        return res.status(404).json({ message: "Content not found or unauthorized" });
+      }
+
+      const publisher = new EnhancedPublisher(business.id);
+      const result = await publisher.scheduleContent(id, new Date(scheduledFor), platforms);
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error scheduling content:", error);
+      res.status(500).json({ message: "Failed to schedule content", error: (error as Error).message });
     }
   });
 

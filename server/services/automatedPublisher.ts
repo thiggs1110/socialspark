@@ -1,5 +1,5 @@
 import { storage } from "../storage";
-import { publishContent } from "./contentGenerator";
+import { publishContent } from "./enhancedPublisher";
 
 const POLL_INTERVAL = 60 * 1000; // Check every minute
 const MAX_RETRIES = 3;
