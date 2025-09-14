@@ -16,6 +16,7 @@ import {
   referrals,
   commissions,
   discountLinks,
+  webhookConfigurations,
   type User,
   type UpsertUser,
   type Business,
@@ -50,6 +51,8 @@ import {
   type InsertCommission,
   type DiscountLink,
   type InsertDiscountLink,
+  type WebhookConfiguration,
+  type InsertWebhookConfiguration,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, or, count, sql } from "drizzle-orm";
@@ -190,6 +193,14 @@ export interface IStorage {
   getAllDiscountLinks(): Promise<DiscountLink[]>;
   updateDiscountLink(id: string, link: Partial<InsertDiscountLink>): Promise<DiscountLink | undefined>;
   incrementDiscountLinkUsage(id: string): Promise<DiscountLink | undefined>;
+
+  // Webhook configuration operations
+  createWebhookConfiguration(config: InsertWebhookConfiguration): Promise<WebhookConfiguration>;
+  getWebhookConfigurationsByBusinessId(businessId: string): Promise<WebhookConfiguration[]>;
+  getWebhookConfigurationByPlatform(businessId: string, platform: string): Promise<WebhookConfiguration | undefined>;
+  updateWebhookConfiguration(id: string, config: Partial<InsertWebhookConfiguration>): Promise<WebhookConfiguration | undefined>;
+  deleteWebhookConfiguration(id: string): Promise<void>;
+  updateWebhookVerification(id: string, lastVerifiedAt: Date): Promise<WebhookConfiguration | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -932,6 +943,47 @@ export class DatabaseStorage implements IStorage {
 
   async getUserById(userId: string): Promise<User | undefined> {
     return this.getUser(userId);
+  }
+
+  // Webhook configuration operations
+  async createWebhookConfiguration(config: InsertWebhookConfiguration): Promise<WebhookConfiguration> {
+    const [webhook] = await db.insert(webhookConfigurations).values(config).returning();
+    return webhook;
+  }
+
+  async getWebhookConfigurationsByBusinessId(businessId: string): Promise<WebhookConfiguration[]> {
+    return await db.select().from(webhookConfigurations)
+      .where(eq(webhookConfigurations.businessId, businessId))
+      .orderBy(desc(webhookConfigurations.createdAt));
+  }
+
+  async getWebhookConfigurationByPlatform(businessId: string, platform: string): Promise<WebhookConfiguration | undefined> {
+    const [webhook] = await db.select().from(webhookConfigurations)
+      .where(and(
+        eq(webhookConfigurations.businessId, businessId),
+        eq(webhookConfigurations.platform, platform)
+      ));
+    return webhook;
+  }
+
+  async updateWebhookConfiguration(id: string, config: Partial<InsertWebhookConfiguration>): Promise<WebhookConfiguration | undefined> {
+    const [webhook] = await db.update(webhookConfigurations)
+      .set({ ...config, updatedAt: new Date() })
+      .where(eq(webhookConfigurations.id, id))
+      .returning();
+    return webhook;
+  }
+
+  async deleteWebhookConfiguration(id: string): Promise<void> {
+    await db.delete(webhookConfigurations).where(eq(webhookConfigurations.id, id));
+  }
+
+  async updateWebhookVerification(id: string, lastVerifiedAt: Date): Promise<WebhookConfiguration | undefined> {
+    const [webhook] = await db.update(webhookConfigurations)
+      .set({ lastVerifiedAt, updatedAt: new Date() })
+      .where(eq(webhookConfigurations.id, id))
+      .returning();
+    return webhook;
   }
 }
 

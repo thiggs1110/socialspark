@@ -3,6 +3,11 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
+
+// Critical Security: Raw body middleware for webhook signature verification
+// Must be added BEFORE express.json() to preserve raw body for HMAC verification
+app.use('/webhook/*', express.raw({ type: 'application/json' }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

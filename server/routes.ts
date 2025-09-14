@@ -1395,6 +1395,309 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // CRITICAL SECURITY: Webhook Signature Verification Functions
+  
+  // Facebook/Instagram signature verification using X-Hub-Signature-256
+  function verifyFacebookSignature(rawBody: Buffer, signature: string): boolean {
+    if (!signature || !process.env.FACEBOOK_APP_SECRET) {
+      console.error('[webhook] Missing Facebook signature or app secret');
+      return false;
+    }
+    
+    // Remove 'sha256=' prefix if present
+    const signatureHash = signature.startsWith('sha256=') ? signature.slice(7) : signature;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.FACEBOOK_APP_SECRET)
+      .update(rawBody)
+      .digest('hex');
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(signatureHash, 'hex'),
+      Buffer.from(expectedSignature, 'hex')
+    );
+  }
+
+  // Twitter signature verification using X-Twitter-Webhooks-Signature
+  function verifyTwitterSignature(rawBody: Buffer, signature: string): boolean {
+    if (!signature || !process.env.TWITTER_WEBHOOK_SECRET) {
+      console.error('[webhook] Missing Twitter signature or webhook secret');
+      return false;
+    }
+    
+    // Remove 'sha256=' prefix if present
+    const signatureHash = signature.startsWith('sha256=') ? signature.slice(7) : signature;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.TWITTER_WEBHOOK_SECRET)
+      .update(rawBody)
+      .digest('base64');
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(signatureHash, 'base64'),
+      Buffer.from(expectedSignature, 'base64')
+    );
+  }
+
+  // LinkedIn webhook signature verification (uses X-Li-Signature header)
+  function verifyLinkedInSignature(rawBody: Buffer, signature: string): boolean {
+    if (!signature || !process.env.LINKEDIN_WEBHOOK_SECRET) {
+      console.error('[webhook] Missing LinkedIn signature or webhook secret');
+      return false;
+    }
+    
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.LINKEDIN_WEBHOOK_SECRET)
+      .update(rawBody)
+      .digest('base64');
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(signature, 'base64'),
+      Buffer.from(expectedSignature, 'base64')
+    );
+  }
+
+  // Social Media Webhook Endpoints
+
+  // Facebook/Instagram webhook endpoint
+  app.get('/webhook/facebook', (req, res) => {
+    // Webhook verification challenge
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN) {
+      console.log('[webhook] Facebook webhook verified');
+      res.status(200).send(challenge);
+    } else {
+      console.error('[webhook] Facebook webhook verification failed');
+      res.status(403).send('Forbidden');
+    }
+  });
+
+  app.post('/webhook/facebook', async (req, res) => {
+    try {
+      // CRITICAL SECURITY: Verify webhook signature to prevent spoofing
+      const signature = req.headers['x-hub-signature-256'] as string;
+      const rawBody = req.body as Buffer;
+      
+      if (!verifyFacebookSignature(rawBody, signature)) {
+        console.error('[webhook] Facebook signature verification failed');
+        return res.status(401).json({ error: 'Unauthorized - Invalid signature' });
+      }
+      
+      // Parse the JSON body after verification
+      const body = JSON.parse(rawBody.toString());
+      
+      // Handle Facebook Page events
+      if (body.object === 'page') {
+        for (const entry of body.entry) {
+          console.log('[webhook] Facebook page event received:', entry);
+          
+          // Process different event types
+          if (entry.changes) {
+            for (const change of entry.changes) {
+              console.log('[webhook] Facebook change:', change.field, change.value);
+              // TODO: Process comment/message events to update interactions
+            }
+          }
+        }
+      }
+      
+      // Handle Instagram events (often separate object type)
+      if (body.object === 'instagram') {
+        for (const entry of body.entry) {
+          console.log('[webhook] Instagram event received:', entry);
+          
+          // Process Instagram-specific events
+          if (entry.changes) {
+            for (const change of entry.changes) {
+              console.log('[webhook] Instagram change:', change.field, change.value);
+              // TODO: Process Instagram comment/message events
+            }
+          }
+        }
+      }
+      
+      // Handle user-level events (can include Instagram)
+      if (body.object === 'user') {
+        for (const entry of body.entry) {
+          console.log('[webhook] User-level event received:', entry);
+          // TODO: Process user-level Instagram events
+        }
+      }
+      
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error('[webhook] Facebook webhook error:', error);
+      res.status(400).json({ error: 'Webhook processing failed' });
+    }
+  });
+
+  // Twitter webhook endpoint
+  app.get('/webhook/twitter', (req, res) => {
+    // Twitter webhook challenge response system (CRC)
+    const crc_token = req.query.crc_token;
+    
+    if (crc_token) {
+      const crypto = require('crypto');
+      const hmac = crypto.createHmac('sha256', process.env.TWITTER_WEBHOOK_SECRET || '');
+      hmac.update(crc_token);
+      const responseToken = 'sha256=' + hmac.digest('base64');
+      
+      console.log('[webhook] Twitter webhook verified');
+      res.status(200).json({ response_token: responseToken });
+    } else {
+      console.error('[webhook] Twitter webhook verification failed');
+      res.status(400).json({ error: 'Missing crc_token' });
+    }
+  });
+
+  app.post('/webhook/twitter', async (req, res) => {
+    try {
+      // CRITICAL SECURITY: Verify webhook signature to prevent spoofing
+      const signature = req.headers['x-twitter-webhooks-signature'] as string;
+      const rawBody = req.body as Buffer;
+      
+      if (!verifyTwitterSignature(rawBody, signature)) {
+        console.error('[webhook] Twitter signature verification failed');
+        return res.status(401).json({ error: 'Unauthorized - Invalid signature' });
+      }
+      
+      // Parse the JSON body after verification
+      const body = JSON.parse(rawBody.toString());
+      
+      // Handle Twitter events (mentions, DMs, replies)
+      if (body.tweet_create_events) {
+        for (const tweet of body.tweet_create_events) {
+          console.log('[webhook] Twitter tweet event:', tweet.id_str);
+          // TODO: Process tweet mentions/replies to update interactions
+        }
+      }
+      
+      if (body.direct_message_events) {
+        for (const dm of body.direct_message_events) {
+          console.log('[webhook] Twitter DM event:', dm.id);
+          // TODO: Process direct messages to update interactions
+        }
+      }
+      
+      // Handle user follow events
+      if (body.follow_events) {
+        for (const follow of body.follow_events) {
+          console.log('[webhook] Twitter follow event:', follow);
+          // TODO: Process follow events
+        }
+      }
+      
+      // Handle tweet engagement events
+      if (body.favorite_events) {
+        for (const favorite of body.favorite_events) {
+          console.log('[webhook] Twitter favorite event:', favorite);
+          // TODO: Process favorite/like events
+        }
+      }
+      
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error('[webhook] Twitter webhook error:', error);
+      res.status(400).json({ error: 'Webhook processing failed' });
+    }
+  });
+
+  // LinkedIn webhook endpoint
+  app.post('/webhook/linkedin', async (req, res) => {
+    try {
+      // CRITICAL SECURITY: Verify webhook signature to prevent spoofing
+      const signature = req.headers['x-li-signature'] as string;
+      const rawBody = req.body as Buffer;
+      
+      if (!verifyLinkedInSignature(rawBody, signature)) {
+        console.error('[webhook] LinkedIn signature verification failed');
+        return res.status(401).json({ error: 'Unauthorized - Invalid signature' });
+      }
+      
+      // Parse the JSON body after verification
+      const body = JSON.parse(rawBody.toString());
+      
+      // Handle LinkedIn events (comments, messages, reactions)
+      console.log('[webhook] LinkedIn event received:', body);
+      
+      // Handle LinkedIn post engagements
+      if (body.activity && body.activity.type) {
+        console.log('[webhook] LinkedIn activity:', body.activity.type);
+        // TODO: Process LinkedIn post engagement events
+      }
+      
+      // Handle LinkedIn direct messages
+      if (body.eventType === 'DIRECT_MESSAGE') {
+        console.log('[webhook] LinkedIn direct message event');
+        // TODO: Process LinkedIn direct message events
+      }
+      
+      // Handle LinkedIn member interactions
+      if (body.eventType === 'MEMBER_INTERACTION') {
+        console.log('[webhook] LinkedIn member interaction event');
+        // TODO: Process member interaction events
+      }
+      
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error('[webhook] LinkedIn webhook error:', error);
+      res.status(400).json({ error: 'Webhook processing failed' });
+    }
+  });
+
+  // Instagram webhook endpoint (dedicated route for Instagram-specific events)
+  app.get('/webhook/instagram', (req, res) => {
+    // Instagram webhook verification (uses same mechanism as Facebook)
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN) {
+      console.log('[webhook] Instagram webhook verified');
+      res.status(200).send(challenge);
+    } else {
+      console.error('[webhook] Instagram webhook verification failed');
+      res.status(403).send('Forbidden');
+    }
+  });
+
+  app.post('/webhook/instagram', async (req, res) => {
+    try {
+      // CRITICAL SECURITY: Verify webhook signature to prevent spoofing
+      const signature = req.headers['x-hub-signature-256'] as string;
+      const rawBody = req.body as Buffer;
+      
+      if (!verifyFacebookSignature(rawBody, signature)) {
+        console.error('[webhook] Instagram signature verification failed');
+        return res.status(401).json({ error: 'Unauthorized - Invalid signature' });
+      }
+      
+      // Parse the JSON body after verification
+      const body = JSON.parse(rawBody.toString());
+      
+      // Handle Instagram-specific events
+      console.log('[webhook] Instagram dedicated event received:', body);
+      
+      // Process Instagram events (comments, mentions, story mentions)
+      if (body.entry) {
+        for (const entry of body.entry) {
+          if (entry.changes) {
+            for (const change of entry.changes) {
+              console.log('[webhook] Instagram change:', change.field, change.value);
+              // TODO: Process Instagram-specific events (comments, mentions, story interactions)
+            }
+          }
+        }
+      }
+      
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error('[webhook] Instagram webhook error:', error);
+      res.status(400).json({ error: 'Webhook processing failed' });
+    }
+  });
+
   // Admin API endpoints
   app.get('/api/admin/users', isAuthenticated, requireAdmin, async (req: any, res) => {
     try {
