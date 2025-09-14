@@ -68,6 +68,7 @@ export interface IStorage {
 
   // Platform connection operations
   createPlatformConnection(connection: InsertPlatformConnection): Promise<PlatformConnection>;
+  getPlatformConnectionById(id: string): Promise<PlatformConnection | undefined>;
   getPlatformConnectionsByBusinessId(businessId: string): Promise<PlatformConnection[]>;
   updatePlatformConnection(id: string, connection: Partial<InsertPlatformConnection>): Promise<PlatformConnection | undefined>;
   deletePlatformConnection(id: string): Promise<void>;
@@ -277,6 +278,11 @@ export class DatabaseStorage implements IStorage {
   async createPlatformConnection(connection: InsertPlatformConnection): Promise<PlatformConnection> {
     const [newConnection] = await db.insert(platformConnections).values(connection).returning();
     return newConnection;
+  }
+
+  async getPlatformConnectionById(id: string): Promise<PlatformConnection | undefined> {
+    const [connection] = await db.select().from(platformConnections).where(eq(platformConnections.id, id));
+    return connection;
   }
 
   async getPlatformConnectionsByBusinessId(businessId: string): Promise<PlatformConnection[]> {

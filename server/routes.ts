@@ -279,7 +279,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Get user info from Facebook
-          const userResponse = await fetch(`https://graph.facebook.com/v18.0/me?access_token=${tokenData.access_token}&fields=id,name,email`);
+          const userResponse = await fetch(`https://graph.facebook.com/v18.0/me?fields=id,name,email`, {
+            headers: {
+              'Authorization': `Bearer ${tokenData.access_token}`
+            }
+          });
           const userData = await userResponse.json();
 
           return {
@@ -1461,6 +1465,337 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error getting discount link:", error);
       res.status(500).json({ error: "Failed to get discount link" });
+    }
+  });
+
+  // Social Media Integration Routes
+
+  // Facebook OAuth Routes
+  app.get('/api/auth/facebook/connect', isAuthenticated, async (req: any, res) => {
+    try {
+      const business = await storage.getBusinessByUserId(req.user.id);
+      if (!business) {
+        return res.status(404).json({ error: "Business not found" });
+      }
+
+      const { facebookApiService } = await import("./services/facebookApiService");
+      if (!facebookApiService.isConfigured()) {
+        return res.status(503).json({ error: "Facebook integration not configured" });
+      }
+
+      const { oauthStateManager } = await import("./services/oauthStateManager");
+      const stateId = oauthStateManager.generateState(business.id, 'facebook');
+      const redirectUri = `${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/api/auth/facebook/callback`;
+      const authUrl = facebookApiService.getOAuthUrl(business.id, redirectUri, stateId);
+
+      res.json({ authUrl });
+    } catch (error) {
+      console.error("Error generating Facebook auth URL:", error);
+      res.status(500).json({ error: "Failed to generate authorization URL" });
+    }
+  });
+
+  app.get('/api/auth/facebook/callback', async (req, res) => {
+    try {
+      const { code, state } = req.query;
+      
+      if (!code || !state) {
+        return res.status(400).json({ error: "Missing authorization code or state" });
+      }
+
+      const { oauthStateManager } = await import("./services/oauthStateManager");
+      const stateData = oauthStateManager.consumeState(state as string);
+      
+      if (!stateData || stateData.platform !== 'facebook') {
+        return res.status(400).json({ error: "Invalid or expired state" });
+      }
+
+      const { facebookApiService } = await import("./services/facebookApiService");
+      const redirectUri = `${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/api/auth/facebook/callback`;
+      
+      // Exchange code for access token
+      const tokenResult = await facebookApiService.exchangeCodeForToken(code as string, redirectUri);
+      const longLivedToken = await facebookApiService.getLongLivedToken(tokenResult.accessToken);
+      
+      // Get user's pages and Instagram accounts
+      const pages = await facebookApiService.getUserPages(longLivedToken.accessToken);
+      
+      // Automatically connect all available Facebook pages and Instagram accounts
+      const results = [];
+      
+      for (const page of pages) {
+        // Connect Facebook page
+        const fbResult = await facebookApiService.connectFacebookPage(stateData.businessId, page, longLivedToken.accessToken);
+        if (fbResult.success) {
+          results.push({ platform: 'facebook', name: page.name, connected: true });
+        }
+
+        // Check for connected Instagram accounts
+        const igAccounts = await facebookApiService.getInstagramBusinessAccounts(page.access_token, page.id);
+        for (const igAccount of igAccounts) {
+          const igResult = await facebookApiService.connectInstagramAccount(stateData.businessId, igAccount, page.access_token);
+          if (igResult.success) {
+            results.push({ platform: 'instagram', name: igAccount.username, connected: true });
+          }
+        }
+      }
+      
+      const connectedCount = results.filter(r => r.connected).length;
+      if (connectedCount > 0) {
+        res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?connected=facebook&accounts=${connectedCount}`);
+      } else {
+        res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?error=no_accounts_connected`);
+      }
+    } catch (error) {
+      console.error("Error in Facebook OAuth callback:", error);
+      res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?error=facebook_auth_failed`);
+    }
+  });
+
+  // Twitter OAuth Routes
+  app.get('/api/auth/twitter/connect', isAuthenticated, async (req: any, res) => {
+    try {
+      const business = await storage.getBusinessByUserId(req.user.id);
+      if (!business) {
+        return res.status(404).json({ error: "Business not found" });
+      }
+
+      const { twitterApiService } = await import("./services/twitterApiService");
+      if (!twitterApiService.isConfigured()) {
+        return res.status(503).json({ error: "Twitter integration not configured" });
+      }
+
+      const { oauthStateManager } = await import("./services/oauthStateManager");
+      const { codeChallenge, codeVerifier } = twitterApiService.generateCodeChallenge();
+      const stateId = oauthStateManager.generateState(business.id, 'twitter', codeVerifier);
+      const redirectUri = `${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/api/auth/twitter/callback`;
+      const authUrl = twitterApiService.getOAuthUrl(business.id, redirectUri, stateId, codeChallenge);
+
+      res.json({ authUrl });
+    } catch (error) {
+      console.error("Error generating Twitter auth URL:", error);
+      res.status(500).json({ error: "Failed to generate authorization URL" });
+    }
+  });
+
+  app.get('/api/auth/twitter/callback', async (req, res) => {
+    try {
+      const { code, state } = req.query;
+      
+      if (!code || !state) {
+        return res.status(400).json({ error: "Missing authorization code or state" });
+      }
+
+      const { oauthStateManager } = await import("./services/oauthStateManager");
+      const stateData = oauthStateManager.consumeState(state as string);
+      
+      if (!stateData || stateData.platform !== 'twitter') {
+        return res.status(400).json({ error: "Invalid or expired state" });
+      }
+
+      const { twitterApiService } = await import("./services/twitterApiService");
+      const redirectUri = `${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/api/auth/twitter/callback`;
+      
+      // Exchange code for access token
+      const tokenResult = await twitterApiService.exchangeCodeForToken(
+        code as string, 
+        redirectUri, 
+        stateData.codeVerifier!
+      );
+      
+      // Connect Twitter account
+      const result = await twitterApiService.connectTwitterAccount(
+        stateData.businessId,
+        tokenResult.accessToken,
+        tokenResult.refreshToken,
+        tokenResult.expiresIn
+      );
+
+      if (result.success) {
+        res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?connected=twitter`);
+      } else {
+        res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?error=twitter_connect_failed`);
+      }
+    } catch (error) {
+      console.error("Error in Twitter OAuth callback:", error);
+      res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?error=twitter_auth_failed`);
+    }
+  });
+
+  // LinkedIn OAuth Routes
+  app.get('/api/auth/linkedin/connect', isAuthenticated, async (req: any, res) => {
+    try {
+      const business = await storage.getBusinessByUserId(req.user.id);
+      if (!business) {
+        return res.status(404).json({ error: "Business not found" });
+      }
+
+      const { linkedinApiService } = await import("./services/linkedinApiService");
+      if (!linkedinApiService.isConfigured()) {
+        return res.status(503).json({ error: "LinkedIn integration not configured" });
+      }
+
+      const { oauthStateManager } = await import("./services/oauthStateManager");
+      const stateId = oauthStateManager.generateState(business.id, 'linkedin');
+      const redirectUri = `${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/api/auth/linkedin/callback`;
+      const authUrl = linkedinApiService.getOAuthUrl(business.id, redirectUri, stateId);
+
+      res.json({ authUrl });
+    } catch (error) {
+      console.error("Error generating LinkedIn auth URL:", error);
+      res.status(500).json({ error: "Failed to generate authorization URL" });
+    }
+  });
+
+  app.get('/api/auth/linkedin/callback', async (req, res) => {
+    try {
+      const { code, state } = req.query;
+      
+      if (!code || !state) {
+        return res.status(400).json({ error: "Missing authorization code or state" });
+      }
+
+      const { oauthStateManager } = await import("./services/oauthStateManager");
+      const stateData = oauthStateManager.consumeState(state as string);
+      
+      if (!stateData || stateData.platform !== 'linkedin') {
+        return res.status(400).json({ error: "Invalid or expired state" });
+      }
+
+      const { linkedinApiService } = await import("./services/linkedinApiService");
+      const redirectUri = `${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/api/auth/linkedin/callback`;
+      
+      // Exchange code for access token
+      const tokenResult = await linkedinApiService.exchangeCodeForToken(code as string, redirectUri);
+      
+      // Connect personal profile
+      const profileResult = await linkedinApiService.connectLinkedInProfile(
+        stateData.businessId,
+        tokenResult.accessToken,
+        tokenResult.expiresIn
+      );
+
+      // Get organizations and connect them automatically
+      const organizations = await linkedinApiService.getUserOrganizations(tokenResult.accessToken);
+      const results = [];
+      
+      if (profileResult.success) {
+        results.push({ type: 'personal', connected: true });
+      }
+
+      for (const org of organizations) {
+        const orgResult = await linkedinApiService.connectLinkedInOrganization(
+          stateData.businessId, 
+          org, 
+          tokenResult.accessToken, 
+          tokenResult.expiresIn
+        );
+        if (orgResult.success) {
+          results.push({ type: 'organization', name: org.name, connected: true });
+        }
+      }
+      
+      const connectedCount = results.filter(r => r.connected).length;
+      if (connectedCount > 0) {
+        res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?connected=linkedin&accounts=${connectedCount}`);
+      } else {
+        res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?error=linkedin_connect_failed`);
+      }
+    } catch (error) {
+      console.error("Error in LinkedIn OAuth callback:", error);
+      res.redirect(`${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/settings?error=linkedin_auth_failed`);
+    }
+  });
+
+  // Platform Connection Management Routes
+  app.get('/api/platforms/connections', isAuthenticated, async (req: any, res) => {
+    try {
+      const business = await storage.getBusinessByUserId(req.user.id);
+      if (!business) {
+        return res.status(404).json({ error: "Business not found" });
+      }
+
+      const connections = await storage.getPlatformConnectionsByBusinessId(business.id);
+      res.json(connections);
+    } catch (error) {
+      console.error("Error getting platform connections:", error);
+      res.status(500).json({ error: "Failed to get platform connections" });
+    }
+  });
+
+  app.delete('/api/platforms/connections/:id', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const business = await storage.getBusinessByUserId(req.user.id);
+      if (!business) {
+        return res.status(404).json({ error: "Business not found" });
+      }
+
+      // Verify connection belongs to user's business
+      const connection = await storage.getPlatformConnectionById(id);
+      if (!connection || connection.businessId !== business.id) {
+        return res.status(404).json({ error: "Connection not found" });
+      }
+
+      await storage.deletePlatformConnection(id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting platform connection:", error);
+      res.status(500).json({ error: "Failed to delete platform connection" });
+    }
+  });
+
+  // Connect specific Facebook/Instagram accounts
+  app.post('/api/platforms/facebook/connect-accounts', isAuthenticated, async (req: any, res) => {
+    try {
+      const { accountIds, pages, userToken } = req.body;
+      const business = await storage.getBusinessByUserId(req.user.id);
+      if (!business) {
+        return res.status(404).json({ error: "Business not found" });
+      }
+
+      const { facebookApiService } = await import("./services/facebookApiService");
+      const results = [];
+
+      for (const accountId of accountIds) {
+        const page = pages.find((p: any) => p.id === accountId);
+        if (page) {
+          const result = await facebookApiService.connectFacebookPage(business.id, page, userToken);
+          results.push({ accountId, success: result.success, error: result.error });
+        }
+      }
+
+      res.json({ results });
+    } catch (error) {
+      console.error("Error connecting Facebook accounts:", error);
+      res.status(500).json({ error: "Failed to connect Facebook accounts" });
+    }
+  });
+
+  // Connect LinkedIn organizations
+  app.post('/api/platforms/linkedin/connect-organizations', isAuthenticated, async (req: any, res) => {
+    try {
+      const { organizationIds, organizations, accessToken, expiresIn } = req.body;
+      const business = await storage.getBusinessByUserId(req.user.id);
+      if (!business) {
+        return res.status(404).json({ error: "Business not found" });
+      }
+
+      const { linkedinApiService } = await import("./services/linkedinApiService");
+      const results = [];
+
+      for (const orgId of organizationIds) {
+        const org = organizations.find((o: any) => o.id === orgId);
+        if (org) {
+          const result = await linkedinApiService.connectLinkedInOrganization(business.id, org, accessToken, expiresIn);
+          results.push({ organizationId: orgId, success: result.success, error: result.error });
+        }
+      }
+
+      res.json({ results });
+    } catch (error) {
+      console.error("Error connecting LinkedIn organizations:", error);
+      res.status(500).json({ error: "Failed to connect LinkedIn organizations" });
     }
   });
 
