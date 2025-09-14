@@ -101,6 +101,22 @@ export class DatabaseStorage implements IStorage {
         },
       })
       .returning();
+
+    // Auto-create a business for new users if they don't have one
+    const existingBusiness = await this.getBusinessByUserId(user.id);
+    if (!existingBusiness) {
+      const businessName = userData.firstName 
+        ? `${userData.firstName}'s Business`
+        : `${userData.email?.split('@')[0] || 'My'} Business`;
+      
+      await this.createBusiness({
+        userId: user.id,
+        name: businessName,
+        industry: "Other",
+        description: "Default business profile created during onboarding.",
+      });
+    }
+
     return user;
   }
 
@@ -313,6 +329,7 @@ export class DatabaseStorage implements IStorage {
     const conditions = [eq(interactions.businessId, businessId)];
     if (unreadOnly) {
       conditions.push(eq(interactions.isRead, false));
+      conditions.push(eq(interactions.isReplied, false));
     }
 
     return await db

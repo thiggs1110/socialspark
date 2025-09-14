@@ -480,18 +480,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/interactions', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
+      console.log(`[DEBUG] Fetching interactions for userId: ${userId}`);
+      
+      const business = await storage.getBusinessByUserId(userId);
+      console.log(`[DEBUG] Found business:`, business ? { id: business.id, name: business.name } : 'null');
+      
+      if (!business) {
+        console.log(`[DEBUG] No business found for userId: ${userId}`);
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const { unreadOnly = false } = req.query;
+      console.log(`[DEBUG] Fetching interactions for businessId: ${business.id}, unreadOnly: ${unreadOnly}`);
+      
+      const interactions = await storage.getInteractionsByBusinessId(business.id, unreadOnly === 'true');
+      console.log(`[DEBUG] Found ${interactions.length} interactions:`, interactions.map(i => ({ 
+        id: i.id, 
+        message: i.message, 
+        fromUser: i.fromUser,
+        isRead: i.isRead 
+      })));
+      
+      res.json(interactions);
+    } catch (error) {
+      console.error("Error fetching interactions:", error);
+      res.status(500).json({ message: "Failed to fetch interactions" });
+    }
+  });
+
+  app.post('/api/interactions/:id/read', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
       const business = await storage.getBusinessByUserId(userId);
       
       if (!business) {
         return res.status(404).json({ message: "Business not found" });
       }
 
-      const { unreadOnly = false } = req.query;
-      const interactions = await storage.getInteractionsByBusinessId(business.id, unreadOnly === 'true');
-      res.json(interactions);
+      // Verify ownership - ensure interaction belongs to user's business
+      const interactions = await storage.getInteractionsByBusinessId(business.id);
+      const interaction = interactions.find(i => i.id === id);
+      
+      if (!interaction) {
+        return res.status(404).json({ message: "Interaction not found" });
+      }
+
+      await storage.markInteractionAsRead(id);
+      res.json({ success: true });
     } catch (error) {
-      console.error("Error fetching interactions:", error);
-      res.status(500).json({ message: "Failed to fetch interactions" });
+      console.error("Error marking interaction as read:", error);
+      res.status(500).json({ message: "Failed to mark interaction as read" });
     }
   });
 
@@ -530,9 +569,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         targetInteraction.message,
         business!.name,
         {
-          tone: brandVoice!.tone,
-          voice: brandVoice!.voice,
-          brandAdjectives: brandVoice!.brandAdjectives || [],
+          tone: brandVoice?.tone || "professional",
+          voice: brandVoice?.voice || "first-person",
+          brandAdjectives: brandVoice?.brandAdjectives || [],
         }
       );
 
