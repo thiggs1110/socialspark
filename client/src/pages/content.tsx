@@ -18,24 +18,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar, CalendarDays, Edit3, FileText, Hash, Image, MoreVertical, Search, Trash2, CheckCircle, XCircle, Send, Clock, Eye } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
-
-interface Content {
-  id: string;
-  businessId: string;
-  platform: string;
-  contentType: string;
-  status: string;
-  title: string | null;
-  content: string;
-  hashtags: string[] | null;
-  imageUrl: string | null;
-  imagePrompt: string | null;
-  scheduledFor: string | null;
-  publishedAt: string | null;
-  platformPostId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+import { Content as ContentType } from "@shared/schema";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 
 const platformInfo: Record<string, { name: string; color: string; icon: string }> = {
   facebook: { name: "Facebook", color: "bg-blue-500", icon: "f" },
@@ -68,7 +55,7 @@ export default function Content() {
   const { isAuthenticated, isLoading } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("all");
-  const [selectedContent, setSelectedContent] = useState<Content | null>(null);
+  const [selectedContent, setSelectedContent] = useState<ContentType | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
@@ -90,12 +77,19 @@ export default function Content() {
   // Fetch content based on active tab
   const getQueryParams = () => {
     const params: Record<string, string> = { limit: "50" };
-    if (activeTab === "pending") params.status = "pending";
+    if (activeTab === "pending") params.status = "pending_approval";
     return new URLSearchParams(params).toString();
   };
 
-  const { data: content = [], isLoading: isLoadingContent } = useQuery<Content[]>({
-    queryKey: [`/api/content?${getQueryParams()}`],
+  const { data: content = [], isLoading: isLoadingContent } = useQuery<ContentType[]>({
+    queryKey: ['/api/content', { limit: 50, status: activeTab === "pending" ? "pending_approval" : undefined }],
+    queryFn: async () => {
+      const res = await fetch(`/api/content?${getQueryParams()}`, { credentials: 'include' });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch content: ${res.status}`);
+      }
+      return res.json();
+    },
     enabled: isAuthenticated,
   });
 
@@ -331,11 +325,11 @@ function ContentCard({
   onEdit, 
   onDelete 
 }: { 
-  content: Content;
+  content: ContentType;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
-  onEdit: (content: Content) => void;
-  onDelete: (content: Content) => void;
+  onEdit: (content: ContentType) => void;
+  onDelete: (content: ContentType) => void;
 }) {
   const platform = platformInfo[content.platform] || { name: content.platform, color: "bg-gray-500", icon: "?" };
   const status = statusInfo[content.status] || statusInfo.draft;
@@ -452,6 +446,15 @@ function ContentCard({
   );
 }
 
+// Edit schema for content updates
+const editContentSchema = z.object({
+  title: z.string().min(1, "Title is required").max(200, "Title must be under 200 characters"),
+  content: z.string().min(1, "Content is required").max(2000, "Content must be under 2000 characters"),
+  hashtags: z.array(z.string()).optional(),
+});
+
+type EditContentFormData = z.infer<typeof editContentSchema>;
+
 // Edit Content Dialog Component
 function EditContentDialog({ 
   content, 
@@ -460,28 +463,38 @@ function EditContentDialog({
   onSave,
   isSaving 
 }: { 
-  content: Content | null;
+  content: ContentType | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (id: string, updates: { title?: string; content?: string; hashtags?: string[] }) => void;
   isSaving: boolean;
 }) {
-  const [editedContent, setEditedContent] = useState("");
-  const [editedTitle, setEditedTitle] = useState("");
+  const form = useForm<EditContentFormData>({
+    resolver: zodResolver(editContentSchema),
+    defaultValues: {
+      title: "",
+      content: "",
+      hashtags: [],
+    },
+  });
 
   useEffect(() => {
     if (content) {
-      setEditedContent(content.content);
-      setEditedTitle(content.title || "");
+      form.reset({
+        title: content.title || "",
+        content: content.content,
+        hashtags: content.hashtags || [],
+      });
     }
-  }, [content]);
+  }, [content, form]);
 
-  const handleSave = () => {
+  const handleSubmit = (data: EditContentFormData) => {
     if (!content) return;
     
     const updates: { title?: string; content?: string; hashtags?: string[] } = {};
-    if (editedTitle !== content.title) updates.title = editedTitle;
-    if (editedContent !== content.content) updates.content = editedContent;
+    if (data.title !== content.title) updates.title = data.title;
+    if (data.content !== content.content) updates.content = data.content;
+    if (JSON.stringify(data.hashtags) !== JSON.stringify(content.hashtags)) updates.hashtags = data.hashtags;
     
     onSave(content.id, updates);
   };
@@ -495,50 +508,67 @@ function EditContentDialog({
           <DialogTitle>Edit Content</DialogTitle>
         </DialogHeader>
         
-        <div className="space-y-4">
-          <div>
-            <Label htmlFor="title">Title</Label>
-            <Input
-              id="title"
-              value={editedTitle}
-              onChange={(e) => setEditedTitle(e.target.value)}
-              placeholder="Content title..."
-              data-testid="input-edit-title"
-              disabled={isSaving}
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="title"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Title</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder="Content title..."
+                      data-testid="input-edit-title"
+                      disabled={isSaving}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
-          
-          <div>
-            <Label htmlFor="content">Content</Label>
-            <Textarea
-              id="content"
-              value={editedContent}
-              onChange={(e) => setEditedContent(e.target.value)}
-              placeholder="Content text..."
-              rows={8}
-              data-testid="textarea-edit-content"
-              disabled={isSaving}
+            
+            <FormField
+              control={form.control}
+              name="content"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Content</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      {...field}
+                      placeholder="Content text..."
+                      rows={8}
+                      data-testid="textarea-edit-content"
+                      disabled={isSaving}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
-          
-          <div className="flex justify-end space-x-2">
-            <Button 
-              variant="outline" 
-              onClick={() => onOpenChange(false)}
-              data-testid="button-cancel-edit"
-              disabled={isSaving}
-            >
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleSave}
-              data-testid="button-save-edit"
-              disabled={isSaving}
-            >
-              {isSaving ? "Saving..." : "Save Changes"}
-            </Button>
-          </div>
-        </div>
+            
+            <div className="flex justify-end space-x-2">
+              <Button 
+                type="button"
+                variant="outline" 
+                onClick={() => onOpenChange(false)}
+                data-testid="button-cancel-edit"
+                disabled={isSaving}
+              >
+                Cancel
+              </Button>
+              <Button 
+                type="submit"
+                data-testid="button-save-edit"
+                disabled={isSaving}
+              >
+                {isSaving ? "Saving..." : "Save Changes"}
+              </Button>
+            </div>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );
