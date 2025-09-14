@@ -1298,7 +1298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     try {
       const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-        apiVersion: "2023-10-16",
+        apiVersion: "2025-08-27.basil",
       });
       
       // Verify webhook signature
@@ -1377,7 +1377,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const adminUser = await storage.createAdminUser({
         userId,
         role,
-        createdBy: req.user.id,
       });
       res.json(adminUser);
     } catch (error) {
@@ -1434,7 +1433,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Discount link has expired" });
       }
 
-      if (discountLink.usageLimit && discountLink.usageCount >= discountLink.usageLimit) {
+      if (discountLink.usageLimit && (discountLink.usageCount || 0) >= discountLink.usageLimit) {
         return res.status(400).json({ error: "Discount link usage limit exceeded" });
       }
 
