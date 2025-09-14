@@ -235,7 +235,8 @@ export class SocialMediaManager {
   async getAllInteractions(since?: Date): Promise<SocialMediaInteraction[]> {
     const allInteractions: SocialMediaInteraction[] = [];
 
-    for (const platform of this.apis.keys()) {
+    const platforms = Array.from(this.apis.keys());
+    for (const platform of platforms) {
       try {
         const interactions = await this.getInteractionsFromPlatform(platform, since);
         allInteractions.push(...interactions);
