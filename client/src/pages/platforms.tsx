@@ -28,9 +28,14 @@ type PlatformConnection = {
   id: string;
   platform: string;
   platformUserId: string;
+  platformUsername?: string;
+  platformDisplayName?: string;
+  platformProfilePic?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  lastSyncAt?: string;
+  accountInfo?: any;
 };
 
 type Platform = {
@@ -97,23 +102,22 @@ export default function Platforms() {
   
   // Get URL params for success/error messages
   const urlParams = new URLSearchParams(window.location.search);
-  const successPlatform = urlParams.get('success') === 'connected' ? urlParams.get('platform') : null;
+  const connectedPlatform = urlParams.get('connected');
+  const accountsConnected = urlParams.get('accounts');
   const errorType = urlParams.get('error');
-  const errorPlatform = urlParams.get('platform');
-  const errorDetails = urlParams.get('details');
 
   const { data: connections = [], isLoading, error } = useQuery<PlatformConnection[]>({
-    queryKey: ['/api/platform-connections'],
+    queryKey: ['/api/platforms/connections'],
     meta: { errorMessage: "Failed to load platform connections" }
   });
 
   const disconnectMutation = useMutation({
     mutationFn: async (connectionId: string) => {
-      const response = await apiRequest('DELETE', `/api/platform-connections/${connectionId}`);
+      const response = await apiRequest('DELETE', `/api/platforms/connections/${connectionId}`);
       return await response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/platform-connections'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/platforms/connections'] });
     }
   });
 
@@ -121,7 +125,7 @@ export default function Platforms() {
     try {
       setConnectingPlatform(platformId);
       
-      const response = await apiRequest('GET', `/api/oauth/${platformId}/authorize`);
+      const response = await apiRequest('GET', `/api/auth/${platformId}/connect`);
       const data = await response.json();
       const { authUrl } = data;
       
@@ -195,11 +199,13 @@ export default function Platforms() {
           </div>
 
           {/* Success Message */}
-          {successPlatform && (
+          {connectedPlatform && (
             <Alert className="border-green-200 bg-green-50 dark:bg-green-900/20" data-testid="alert-success-connection">
               <Check className="h-4 w-4 text-green-600" />
               <AlertDescription className="text-green-800 dark:text-green-200" data-testid="text-success-message">
-                Successfully connected {successPlatform}! You can now post content to this platform.
+                Successfully connected {connectedPlatform}! 
+                {accountsConnected && ` Connected ${accountsConnected} account${parseInt(accountsConnected) > 1 ? 's' : ''}.`}
+                You can now post content to this platform.
               </AlertDescription>
             </Alert>
           )}
@@ -209,7 +215,11 @@ export default function Platforms() {
             <Alert className="border-red-200 bg-red-50 dark:bg-red-900/20" data-testid="alert-error-connection">
               <AlertCircle className="h-4 w-4 text-red-600" />
               <AlertDescription className="text-red-800 dark:text-red-200" data-testid="text-error-message">
-                Failed to connect {errorPlatform}: {errorDetails || 'Unknown error occurred'}
+                {errorType === 'facebook_auth_failed' && 'Failed to connect Facebook. Please try again.'}
+                {errorType === 'twitter_auth_failed' && 'Failed to connect Twitter. Please try again.'}
+                {errorType === 'linkedin_auth_failed' && 'Failed to connect LinkedIn. Please try again.'}
+                {errorType === 'no_accounts_connected' && 'No accounts were connected. Please ensure you have proper permissions.'}
+                {!['facebook_auth_failed', 'twitter_auth_failed', 'linkedin_auth_failed', 'no_accounts_connected'].includes(errorType) && 'An error occurred during connection. Please try again.'}
               </AlertDescription>
             </Alert>
           )}
@@ -306,7 +316,9 @@ export default function Platforms() {
                         <div className="flex items-center justify-between text-sm">
                           <div className="flex items-center space-x-2 text-gray-600 dark:text-gray-400">
                             <Shield className="w-4 h-4" />
-                            <span data-testid={`text-connected-as-${platform.id}`}>Connected as: {connection.platformUserId}</span>
+                            <span data-testid={`text-connected-as-${platform.id}`}>
+                              Connected as: {connection.platformDisplayName || connection.platformUsername || connection.platformUserId}
+                            </span>
                           </div>
                           <div className="text-gray-500 dark:text-gray-500" data-testid={`text-connected-date-${platform.id}`}>
                             Connected {new Date(connection.createdAt).toLocaleDateString()}
