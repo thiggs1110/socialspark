@@ -153,27 +153,34 @@ export default function Content() {
 
   // Update content mutation
   const updateContentMutation = useMutation({
-    mutationFn: ({ id, updates }: { id: string; updates: { title?: string; content?: string; hashtags?: string[] } }) =>
-      apiRequest('PATCH', `/api/content/${id}`, updates),
+    mutationFn: async ({ id, updates }: { id: string; updates: { title?: string; content?: string; hashtags?: string[] } }) => {
+      const response = await apiRequest('PATCH', `/api/content/${id}`, updates);
+      return response.json();
+    },
     onSuccess: () => {
       toast({ title: "Content updated successfully" });
       queryClient.invalidateQueries({ queryKey: ['/api/content'] });
       setEditDialogOpen(false);
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Update error:', error);
       toast({ title: "Failed to update content", variant: "destructive" });
     },
   });
 
   // Delete content mutation
   const deleteContentMutation = useMutation({
-    mutationFn: (contentId: string) => apiRequest('DELETE', `/api/content/${contentId}`),
+    mutationFn: async (contentId: string) => {
+      const response = await apiRequest('DELETE', `/api/content/${contentId}`);
+      return response.json();
+    },
     onSuccess: () => {
       toast({ title: "Content deleted successfully" });
       queryClient.invalidateQueries({ queryKey: ['/api/content'] });
       setDeleteDialogOpen(false);
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Delete error:', error);
       toast({ title: "Failed to delete content", variant: "destructive" });
     },
   });
