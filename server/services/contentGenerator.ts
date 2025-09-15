@@ -3,6 +3,9 @@ import { storage } from "../storage";
 import type { Business, BrandVoice, PlatformConnection, InsertContent } from "@shared/schema";
 // Google Nano Banana (Gemini 2.5 Flash Image) API integration
 import { GoogleGenAI } from "@google/genai";
+import * as fs from "fs";
+import * as path from "path";
+import crypto from "crypto";
 
 export interface BatchContentGenerationRequest {
   businessId: string;
@@ -120,7 +123,7 @@ export async function saveBatchContentAsDrafts(
 
   for (const post of posts) {
     try {
-      // Generate image URL using Nano Banana API (mocked for now)
+      // Generate image URL using Google Gemini 2.5 Flash Image (Nano Banana)
       const imageUrl = await generateImageUrl(post.imagePrompt);
 
       const contentData: InsertContent = {
@@ -149,46 +152,101 @@ export async function saveBatchContentAsDrafts(
 
 async function generateImageUrl(prompt: string): Promise<string> {
   try {
-    // Initialize Google AI with API key
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GOOGLE_API_KEY
-    });
+    // Initialize Google AI with the correct API key - try both GEMINI_API_KEY and GOOGLE_API_KEY
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    
+    if (!apiKey) {
+      console.warn("No Google/Gemini API key found, using fallback images");
+      return getThemeBasedFallbackImage(prompt);
+    }
 
-    console.log(`Generating image with Nano Banana for prompt: ${prompt}`);
+    const ai = new GoogleGenAI({ apiKey });
 
-    // Generate image using Gemini 2.5 Flash Image (Nano Banana)
+    console.log(`Generating image with Gemini 2.5 Flash Image for prompt: ${prompt}`);
+
+    // Generate image using the correct Gemini 2.5 Flash Image API structure
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-image-preview",
       contents: [prompt],
     });
 
-    // Extract the generated image from response
+    // Extract and save the generated image from response
     if (response.candidates && response.candidates[0] && response.candidates[0].content && response.candidates[0].content.parts) {
       for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData && part.inlineData.data) {
-          // Convert base64 to data URL for direct use
-          const imageDataUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-          console.log(`Successfully generated image with Nano Banana`);
-          return imageDataUrl;
+        if (part.text) {
+          console.log(`AI description: ${part.text}`);
+        } else if (part.inlineData && part.inlineData.data) {
+          // Generate unique filename with timestamp
+          const timestamp = Date.now();
+          const randomId = crypto.randomBytes(4).toString('hex');
+          const filename = `generated_${timestamp}_${randomId}.png`;
+          const imagePath = path.join("attached_assets", "generated_images", filename);
+          
+          // Convert base64 data to buffer and save to file
+          const imageBuffer = Buffer.from(part.inlineData.data, "base64");
+          
+          // Ensure directory exists
+          const directory = path.dirname(imagePath);
+          if (!fs.existsSync(directory)) {
+            fs.mkdirSync(directory, { recursive: true });
+          }
+          
+          // Save image file
+          fs.writeFileSync(imagePath, imageBuffer);
+          
+          console.log(`Successfully generated and saved image: ${imagePath}`);
+          
+          // Return path that can be used by frontend with @assets alias
+          return `@assets/generated_images/${filename}`;
         }
       }
     }
 
-    throw new Error("No image data found in response");
+    throw new Error("No image data found in response from Gemini 2.5 Flash Image");
   } catch (error) {
-    console.error("Error generating image with Nano Banana:", error);
+    console.error("Error generating image with Gemini 2.5 Flash Image:", error);
+    console.log("Falling back to themed placeholder image");
     
-    // Fallback to placeholder images if API fails
-    if (prompt.toLowerCase().includes("coffee")) {
-      return "https://images.unsplash.com/photo-1447933601403-0c6688de566e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
-    } else if (prompt.toLowerCase().includes("workspace") || prompt.toLowerCase().includes("professional")) {
-      return "https://images.unsplash.com/photo-1521791136064-7986c2920216?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
-    } else if (prompt.toLowerCase().includes("latte") || prompt.toLowerCase().includes("art")) {
-      return "https://images.unsplash.com/photo-1510591509098-f4fdc6d0ff04?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
-    } else {
-      return "https://images.unsplash.com/photo-1559056199-641a0ac8b55e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
-    }
+    // Fallback to themed placeholder images
+    return getThemeBasedFallbackImage(prompt);
   }
+}
+
+function getThemeBasedFallbackImage(prompt: string): string {
+  const lowerPrompt = prompt.toLowerCase();
+  
+  // Business and professional themes
+  if (lowerPrompt.includes("workspace") || lowerPrompt.includes("professional") || lowerPrompt.includes("office")) {
+    return "https://images.unsplash.com/photo-1521791136064-7986c2920216?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+  }
+  
+  // Food and beverage themes
+  if (lowerPrompt.includes("coffee") || lowerPrompt.includes("cafe") || lowerPrompt.includes("drink")) {
+    return "https://images.unsplash.com/photo-1447933601403-0c6688de566e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+  }
+  
+  // Art and creative themes  
+  if (lowerPrompt.includes("latte") || lowerPrompt.includes("art") || lowerPrompt.includes("creative")) {
+    return "https://images.unsplash.com/photo-1510591509098-f4fdc6d0ff04?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+  }
+  
+  // Technology themes
+  if (lowerPrompt.includes("tech") || lowerPrompt.includes("digital") || lowerPrompt.includes("computer")) {
+    return "https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+  }
+  
+  // Nature and outdoor themes
+  if (lowerPrompt.includes("nature") || lowerPrompt.includes("outdoor") || lowerPrompt.includes("landscape")) {
+    return "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+  }
+  
+  // Shopping and retail themes
+  if (lowerPrompt.includes("shop") || lowerPrompt.includes("product") || lowerPrompt.includes("retail")) {
+    return "https://images.unsplash.com/photo-1441986300917-64674bd600d8?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+  }
+  
+  // Default business image
+  return "https://images.unsplash.com/photo-1559056199-641a0ac8b55e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
 }
 
 export async function scheduleContent(

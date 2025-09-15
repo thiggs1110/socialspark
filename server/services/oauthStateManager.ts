@@ -15,9 +15,9 @@ export class OAuthStateManager {
   /**
    * Generate secure OAuth state with CSRF protection
    */
-  static generateState(businessId: string, platform: string, codeVerifier?: string): string {
-    const nonce = this.generateNonce();
-    const stateId = this.generateNonce();
+  static async generateState(businessId: string, platform: string, codeVerifier?: string): Promise<string> {
+    const nonce = await this.generateNonce();
+    const stateId = await this.generateNonce();
     
     const state: OAuthState = {
       businessId,
@@ -69,8 +69,8 @@ export class OAuthStateManager {
   /**
    * Generate cryptographically secure nonce
    */
-  private static generateNonce(): string {
-    const crypto = require('crypto');
+  private static async generateNonce(): Promise<string> {
+    const crypto = await import('crypto');
     return crypto.randomBytes(32).toString('base64url');
   }
 

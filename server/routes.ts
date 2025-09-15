@@ -186,7 +186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const oauthUrls = {
         facebook: () => {
-          const clientId = process.env.FACEBOOK_CLIENT_ID;
+          const clientId = process.env.FACEBOOK_APP_ID;
           const redirectUri = encodeURIComponent(`${process.env.REPLIT_DOMAINS || 'http://localhost:5000'}/api/oauth/facebook/callback`);
           const scope = encodeURIComponent('pages_manage_posts,pages_read_engagement,instagram_basic,instagram_content_publish');
           return `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${stateNonce}`;
@@ -2058,8 +2058,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { oauthStateManager } = await import("./services/oauthStateManager");
-      const { codeChallenge, codeVerifier } = twitterApiService.generateCodeChallenge();
-      const stateId = oauthStateManager.generateState(business.id, 'twitter', codeVerifier);
+      const { codeChallenge, codeVerifier } = await twitterApiService.generateCodeChallenge();
+      const stateId = await oauthStateManager.generateState(business.id, 'twitter', codeVerifier);
       const redirectUri = `${process.env.REPLIT_DEV_DOMAIN || 'http://localhost:5000'}/api/auth/twitter/callback`;
       const authUrl = twitterApiService.getOAuthUrl(business.id, redirectUri, stateId, codeChallenge);
 

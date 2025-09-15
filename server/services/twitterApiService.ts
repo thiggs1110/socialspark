@@ -61,8 +61,8 @@ export class TwitterApiService {
   /**
    * Generate code challenge for PKCE
    */
-  generateCodeChallenge(): { codeChallenge: string; codeVerifier: string } {
-    const crypto = require('crypto');
+  async generateCodeChallenge(): Promise<{ codeChallenge: string; codeVerifier: string }> {
+    const crypto = await import('crypto');
     const codeVerifier = crypto.randomBytes(32).toString('base64url');
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
     
