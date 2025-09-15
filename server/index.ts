@@ -52,12 +52,8 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
+  // Setup static serving for production mode first
+  if (app.get("env") !== "development") {
     serveStatic(app);
   }
 
@@ -82,8 +78,15 @@ app.use((req, res, next) => {
     port,
     host: "0.0.0.0",
     reusePort: true,
-  }, () => {
+  }, async () => {
     log(`serving on port ${port}`);
     log('Real-time WebSocket service initialized');
+    
+    // Setup vite in development mode AFTER server is listening
+    // so HMR can detect the correct port from server.address()
+    if (app.get("env") === "development") {
+      await setupVite(app, server);
+      log('Vite development server initialized with HMR');
+    }
   });
 })();
