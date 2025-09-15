@@ -1,6 +1,8 @@
 import { generateContent, ContentGenerationRequest } from "./anthropic";
 import { storage } from "../storage";
 import type { Business, BrandVoice, PlatformConnection, InsertContent } from "@shared/schema";
+// Google Nano Banana (Gemini 2.5 Flash Image) API integration
+import { GoogleGenAI } from "@google/genai";
 
 export interface BatchContentGenerationRequest {
   businessId: string;
@@ -29,10 +31,30 @@ export async function generateBatchContent(request: BatchContentGenerationReques
 
   console.log(`Found business: ${business.id} (${business.name}) for user: ${business.userId}`);
 
-  const brandVoice = await storage.getBrandVoiceByBusinessId(business.id);
+  let brandVoice = await storage.getBrandVoiceByBusinessId(business.id);
   if (!brandVoice) {
-    console.error(`Brand voice not configured for businessId: ${business.id}`);
-    throw new Error("Brand voice not configured");
+    console.log(`Brand voice not configured for businessId: ${business.id}, creating default brand voice`);
+    // Create a default brand voice for the business
+    const defaultBrandVoice = {
+      businessId: business.id,
+      tone: "Professional",
+      voice: "first-person",
+      brandAdjectives: ["Professional", "Reliable", "Customer-focused"],
+      useEmojis: true,
+      imageStyle: "professional",
+      topicsToFocus: ["Industry tips", "Product features"],
+      topicsToAvoid: [],
+      customInstructions: "",
+      contentMix: {
+        educational: 40,
+        promotional: 30,
+        community: 20,
+        humorous: 10,
+      },
+    };
+    
+    brandVoice = await storage.createBrandVoice(defaultBrandVoice);
+    console.log(`Created default brand voice: ${brandVoice.id} for business: ${business.id}`);
   }
 
   console.log(`Found brand voice: ${brandVoice.id} with tone: ${brandVoice.tone} and voice: ${brandVoice.voice}`);
@@ -125,20 +147,47 @@ export async function saveBatchContentAsDrafts(
   return savedContentIds;
 }
 
-// Mock function for Nano Banana API - replace with actual API call
 async function generateImageUrl(prompt: string): Promise<string> {
-  // In production, this would call the Nano Banana API
-  // For now, return a placeholder based on the prompt content
-  
-  // Mock different image styles based on prompt keywords
-  if (prompt.toLowerCase().includes("coffee")) {
-    return "https://images.unsplash.com/photo-1447933601403-0c6688de566e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
-  } else if (prompt.toLowerCase().includes("workspace") || prompt.toLowerCase().includes("professional")) {
-    return "https://images.unsplash.com/photo-1521791136064-7986c2920216?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
-  } else if (prompt.toLowerCase().includes("latte") || prompt.toLowerCase().includes("art")) {
-    return "https://images.unsplash.com/photo-1510591509098-f4fdc6d0ff04?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
-  } else {
-    return "https://images.unsplash.com/photo-1559056199-641a0ac8b55e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+  try {
+    // Initialize Google AI with API key
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GOOGLE_API_KEY
+    });
+
+    console.log(`Generating image with Nano Banana for prompt: ${prompt}`);
+
+    // Generate image using Gemini 2.5 Flash Image (Nano Banana)
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-image-preview",
+      contents: [prompt],
+    });
+
+    // Extract the generated image from response
+    if (response.candidates && response.candidates[0] && response.candidates[0].content && response.candidates[0].content.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData && part.inlineData.data) {
+          // Convert base64 to data URL for direct use
+          const imageDataUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+          console.log(`Successfully generated image with Nano Banana`);
+          return imageDataUrl;
+        }
+      }
+    }
+
+    throw new Error("No image data found in response");
+  } catch (error) {
+    console.error("Error generating image with Nano Banana:", error);
+    
+    // Fallback to placeholder images if API fails
+    if (prompt.toLowerCase().includes("coffee")) {
+      return "https://images.unsplash.com/photo-1447933601403-0c6688de566e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+    } else if (prompt.toLowerCase().includes("workspace") || prompt.toLowerCase().includes("professional")) {
+      return "https://images.unsplash.com/photo-1521791136064-7986c2920216?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+    } else if (prompt.toLowerCase().includes("latte") || prompt.toLowerCase().includes("art")) {
+      return "https://images.unsplash.com/photo-1510591509098-f4fdc6d0ff04?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+    } else {
+      return "https://images.unsplash.com/photo-1559056199-641a0ac8b55e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600";
+    }
   }
 }
 
