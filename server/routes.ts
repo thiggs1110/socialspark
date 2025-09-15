@@ -1089,6 +1089,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Analytics overview endpoint
+  app.get('/api/analytics/overview', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const { days = 30 } = req.query;
+      const overview = await storage.getAnalyticsOverview(business.id, parseInt(days as string));
+      res.json(overview);
+    } catch (error) {
+      console.error("Error fetching analytics overview:", error);
+      res.status(500).json({ message: "Failed to fetch analytics overview" });
+    }
+  });
+
+  // Content performance endpoint
+  app.get('/api/analytics/content-performance', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const { limit = 10 } = req.query;
+      const performance = await storage.getContentPerformance(business.id, parseInt(limit as string));
+      res.json(performance);
+    } catch (error) {
+      console.error("Error fetching content performance:", error);
+      res.status(500).json({ message: "Failed to fetch content performance" });
+    }
+  });
+
+  // Analytics export endpoint
+  app.get('/api/analytics/export', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const business = await storage.getBusinessByUserId(userId);
+      
+      if (!business) {
+        return res.status(404).json({ message: "Business not found" });
+      }
+
+      const { days = 30 } = req.query;
+      const [overview, contentPerformance] = await Promise.all([
+        storage.getAnalyticsOverview(business.id, parseInt(days as string)),
+        storage.getContentPerformance(business.id, 50) // Get more content for export
+      ]);
+
+      // Generate CSV content
+      const csvRows = [
+        'Content Title,Platform,Published Date,Views,Likes,Shares,Comments,Engagement Rate (%)'
+      ];
+
+      contentPerformance.forEach(content => {
+        const publishedDate = content.publishedAt 
+          ? new Date(content.publishedAt).toLocaleDateString() 
+          : 'Draft';
+        csvRows.push([
+          `"${content.title.replace(/"/g, '""')}"`, // Escape quotes in title
+          content.platform,
+          publishedDate,
+          content.views.toString(),
+          content.likes.toString(),
+          content.shares.toString(),
+          content.comments.toString(),
+          content.engagementRate.toString()
+        ].join(','));
+      });
+
+      // Add summary rows
+      csvRows.push('');
+      csvRows.push('Summary Statistics');
+      csvRows.push(`Total Posts,${overview.totalPosts}`);
+      csvRows.push(`Total Views,${overview.totalViews}`);
+      csvRows.push(`Total Engagements,${overview.totalEngagements}`);
+      csvRows.push(`Average Engagement Rate,${overview.avgEngagementRate}%`);
+
+      const csvContent = csvRows.join('\n');
+      
+      // Set headers for CSV download
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="analytics-report-${days}days-${new Date().toISOString().split('T')[0]}.csv"`);
+      res.send(csvContent);
+    } catch (error) {
+      console.error("Error generating analytics export:", error);
+      res.status(500).json({ message: "Failed to generate export" });
+    }
+  });
+
   // Interaction management routes
   app.get('/api/interactions', isAuthenticated, async (req: any, res) => {
     try {

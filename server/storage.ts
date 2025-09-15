@@ -119,6 +119,28 @@ export interface IStorage {
   getSchedulingSettingsByBusinessId(businessId: string): Promise<SchedulingSettings[]>;
   updateSchedulingSettings(id: string, settings: Partial<InsertSchedulingSettings>): Promise<SchedulingSettings | undefined>;
 
+  // Analytics operations
+  calculateEngagementRate(businessId: string): Promise<number>;
+  getAnalyticsOverview(businessId: string, days?: number): Promise<{
+    totalPosts: number;
+    totalViews: number;
+    totalEngagements: number;
+    avgEngagementRate: number;
+    topPlatforms: Array<{ platform: string; posts: number; engagement: number }>;
+    dailyStats: Array<{ date: string; posts: number; views: number; engagements: number }>;
+  }>;
+  getContentPerformance(businessId: string, limit?: number): Promise<Array<{
+    id: string;
+    title: string;
+    platform: string;
+    publishedAt: Date | null;
+    views: number;
+    likes: number;
+    shares: number;
+    comments: number;
+    engagementRate: number;
+  }>>;
+
   // Dashboard stats
   getDashboardStats(businessId: string): Promise<{
     weeklyPosts: number;
@@ -559,13 +581,209 @@ export class DatabaseStorage implements IStorage {
         )
       );
 
-    // For now, return a mock engagement rate - in production this would be calculated from analytics
+    // Calculate real engagement rate from content analytics
+    const engagementRate = await this.calculateEngagementRate(businessId);
+
     return {
       weeklyPosts: weeklyPostsResult.count,
-      engagementRate: 8.2, // This would be calculated from actual analytics data
+      engagementRate: engagementRate,
       activePlatforms: activePlatformsResult.count,
       pendingApprovals: pendingApprovalsResult.count,
     };
+  }
+
+  // Calculate real engagement rate from analytics data
+  async calculateEngagementRate(businessId: string): Promise<number> {
+    try {
+      // Get all published content for this business
+      const publishedContent = await db
+        .select({
+          contentId: content.id,
+          analytics: contentAnalytics
+        })
+        .from(content)
+        .leftJoin(contentAnalytics, eq(content.id, contentAnalytics.contentId))
+        .where(
+          and(
+            eq(content.businessId, businessId),
+            eq(content.status, "published")
+          )
+        );
+
+      if (publishedContent.length === 0) {
+        return 0;
+      }
+
+      // Calculate total engagement and impressions
+      let totalEngagements = 0;
+      let totalViews = 0;
+      let itemsWithData = 0;
+
+      for (const item of publishedContent) {
+        if (item.analytics) {
+          const { likes, shares, comments, views } = item.analytics;
+          const engagementCount = (likes || 0) + (shares || 0) + (comments || 0);
+          const viewCount = views || 0;
+          totalEngagements += engagementCount;
+          totalViews += viewCount;
+          if (viewCount > 0) itemsWithData++;
+        }
+      }
+
+      // Return 0 if no analytics data available
+      if (itemsWithData === 0 || totalViews === 0) {
+        return 0;
+      }
+
+      // Calculate engagement rate as (total engagements / total views) * 100
+      const engagementRate = (totalEngagements / totalViews) * 100;
+      return Math.round(engagementRate * 10) / 10; // Round to 1 decimal place
+    } catch (error) {
+      console.error("Error calculating engagement rate:", error);
+      return 0;
+    }
+  }
+
+  // Get analytics overview for charts
+  async getAnalyticsOverview(businessId: string, days: number = 30): Promise<{
+    totalPosts: number;
+    totalViews: number;
+    totalEngagements: number;
+    avgEngagementRate: number;
+    topPlatforms: Array<{ platform: string; posts: number; engagement: number }>;
+    dailyStats: Array<{ date: string; posts: number; views: number; engagements: number }>;
+  }> {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    // Get published content with analytics from the specified period
+    const contentWithAnalytics = await db
+      .select({
+        content: content,
+        analytics: contentAnalytics
+      })
+      .from(content)
+      .leftJoin(contentAnalytics, eq(content.id, contentAnalytics.contentId))
+      .where(
+        and(
+          eq(content.businessId, businessId),
+          eq(content.status, "published"),
+          sql`${content.publishedAt} >= ${startDate}`
+        )
+      )
+      .orderBy(desc(content.publishedAt));
+
+    // Calculate totals
+    let totalPosts = contentWithAnalytics.length;
+    let totalViews = 0;
+    let totalEngagements = 0;
+
+    // Platform stats
+    const platformStats: Record<string, { posts: number; engagement: number }> = {};
+    
+    // Daily stats
+    const dailyStatsMap: Record<string, { posts: number; views: number; engagements: number }> = {};
+
+    for (const item of contentWithAnalytics) {
+      const { content: contentItem, analytics } = item;
+      
+      // Platform stats
+      if (!platformStats[contentItem.platform]) {
+        platformStats[contentItem.platform] = { posts: 0, engagement: 0 };
+      }
+      platformStats[contentItem.platform].posts++;
+
+      if (analytics) {
+        const engagements = (analytics.likes || 0) + (analytics.shares || 0) + (analytics.comments || 0);
+        const views = analytics.views || 0;
+        totalViews += views;
+        totalEngagements += engagements;
+        platformStats[contentItem.platform].engagement += engagements;
+      }
+
+      // Daily stats
+      if (contentItem.publishedAt) {
+        const dateKey = contentItem.publishedAt.toISOString().split('T')[0];
+        if (!dailyStatsMap[dateKey]) {
+          dailyStatsMap[dateKey] = { posts: 0, views: 0, engagements: 0 };
+        }
+        dailyStatsMap[dateKey].posts++;
+        if (analytics) {
+          dailyStatsMap[dateKey].views += analytics.views || 0;
+          dailyStatsMap[dateKey].engagements += (analytics.likes || 0) + (analytics.shares || 0) + (analytics.comments || 0);
+        }
+      }
+    }
+
+    // Convert to arrays and sort
+    const topPlatforms = Object.entries(platformStats)
+      .map(([platform, stats]) => ({ platform, ...stats }))
+      .sort((a, b) => b.engagement - a.engagement);
+
+    const dailyStats = Object.entries(dailyStatsMap)
+      .map(([date, stats]) => ({ date, ...stats }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const avgEngagementRate = totalViews > 0 ? Math.round((totalEngagements / totalViews) * 1000) / 10 : 0;
+
+    return {
+      totalPosts,
+      totalViews,
+      totalEngagements,
+      avgEngagementRate,
+      topPlatforms,
+      dailyStats
+    };
+  }
+
+  // Get content performance metrics
+  async getContentPerformance(businessId: string, limit: number = 10): Promise<Array<{
+    id: string;
+    title: string;
+    platform: string;
+    publishedAt: Date | null;
+    views: number;
+    likes: number;
+    shares: number;
+    comments: number;
+    engagementRate: number;
+  }>> {
+    const contentWithAnalytics = await db
+      .select({
+        content: content,
+        analytics: contentAnalytics
+      })
+      .from(content)
+      .leftJoin(contentAnalytics, eq(content.id, contentAnalytics.contentId))
+      .where(
+        and(
+          eq(content.businessId, businessId),
+          eq(content.status, "published")
+        )
+      )
+      .orderBy(desc(content.publishedAt))
+      .limit(limit);
+
+    return contentWithAnalytics.map(({ content: contentItem, analytics }) => {
+      const views = analytics?.views || 0;
+      const likes = analytics?.likes || 0;
+      const shares = analytics?.shares || 0;
+      const comments = analytics?.comments || 0;
+      const totalEngagements = likes + shares + comments;
+      const engagementRate = views > 0 ? Math.round((totalEngagements / views) * 1000) / 10 : 0;
+
+      return {
+        id: contentItem.id,
+        title: contentItem.title || 'Untitled',
+        platform: contentItem.platform,
+        publishedAt: contentItem.publishedAt,
+        views,
+        likes,
+        shares,
+        comments,
+        engagementRate
+      };
+    });
   }
 
   // Subscription plan operations
